@@ -52,13 +52,13 @@ namespace webrtc {
     running_.store(true);
 
     // Get WebSocket port using the same mapping as other Sunshine ports
-    // This makes it config::sunshine.port + PORT_WEBRTC_WS
-    uint16_t ws_port = static_cast<uint16_t>(config::sunshine.port + PORT_WEBRTC_WS);
+    // This makes it ::config::sunshine.port + PORT_WEBRTC_WS
+    uint16_t ws_port = static_cast<uint16_t>(::config::sunshine.port + PORT_WEBRTC_WS);
 
     // Use SSL with Sunshine's existing certificates
     bool use_ssl = true;
-    std::string cert_path = config::nvhttp.cert;
-    std::string key_path = config::nvhttp.pkey;
+    std::string cert_path = ::config::nvhttp.cert;
+    std::string key_path = ::config::nvhttp.pkey;
 
     if (!ws_server().start(ws_port, use_ssl, cert_path, key_path)) {
       // Try without SSL as fallback
