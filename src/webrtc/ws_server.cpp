@@ -27,23 +27,69 @@ using tcp = boost::asio::ip::tcp;
 
 namespace webrtc {
 
-  // Forward declarations
-  class Session;
-  class SSLSession;
+  // Forward declaration of Impl
+  class WebSocketServerImpl;
+
+  /**
+   * @brief Plain WebSocket session
+   */
+  class Session : public std::enable_shared_from_this<Session> {
+  public:
+    Session(tcp::socket socket, std::shared_ptr<WebSocketServerImpl> server);
+
+    void run();
+    void send(const std::string &message);
+    void close();
+
+  private:
+    void on_accept(beast::error_code ec);
+    void do_read();
+    void on_read(beast::error_code ec, std::size_t bytes_transferred);
+    void do_send(const std::string &message);
+
+    websocket::stream<beast::tcp_stream> ws_;
+    std::shared_ptr<WebSocketServerImpl> server_;
+    beast::flat_buffer buffer_;
+    ws_connection_id conn_id_;
+  };
+
+  /**
+   * @brief SSL WebSocket session
+   */
+  class SSLSession : public std::enable_shared_from_this<SSLSession> {
+  public:
+    SSLSession(tcp::socket socket, ssl::context &ctx, std::shared_ptr<WebSocketServerImpl> server);
+
+    void run();
+    void send(const std::string &message);
+    void close();
+
+  private:
+    void on_ssl_handshake(beast::error_code ec);
+    void on_accept(beast::error_code ec);
+    void do_read();
+    void on_read(beast::error_code ec, std::size_t bytes_transferred);
+    void do_send(const std::string &message);
+
+    websocket::stream<beast::ssl_stream<beast::tcp_stream>> ws_;
+    std::shared_ptr<WebSocketServerImpl> server_;
+    beast::flat_buffer buffer_;
+    ws_connection_id conn_id_;
+  };
 
   /**
    * @brief WebSocket server implementation
    */
-  class WebSocketServer::Impl : public std::enable_shared_from_this<WebSocketServer::Impl> {
+  class WebSocketServerImpl : public std::enable_shared_from_this<WebSocketServerImpl> {
   public:
-    Impl() :
+    WebSocketServerImpl() :
         ioc_(1),
         acceptor_(ioc_),
         ssl_ctx_(ssl::context::tlsv12_server),
         running_(false),
         next_conn_id_(1) {}
 
-    ~Impl() {
+    ~WebSocketServerImpl() {
       stop();
     }
 
@@ -121,10 +167,8 @@ namespace webrtc {
       // Close all connections
       {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
-        for (auto &[id, session] : sessions_) {
-          // Session will be closed when shared_ptr is destroyed
-        }
         sessions_.clear();
+        ssl_sessions_.clear();
       }
 
       // Stop the I/O context
@@ -142,59 +186,53 @@ namespace webrtc {
     }
 
     bool send(ws_connection_id conn_id, const std::string &message) {
-      std::shared_ptr<void> session;
-      {
-        std::lock_guard<std::mutex> lock(sessions_mutex_);
-        auto it = sessions_.find(conn_id);
-        if (it == sessions_.end()) {
-          return false;
-        }
-        session = it->second;
-      }
+      std::lock_guard<std::mutex> lock(sessions_mutex_);
 
-      // The session type is erased, we need to handle both SSL and non-SSL
       if (use_ssl_) {
-        auto ssl_session = std::static_pointer_cast<SSLSession>(session);
-        ssl_session->send(message);
+        auto it = ssl_sessions_.find(conn_id);
+        if (it != ssl_sessions_.end()) {
+          it->second->send(message);
+          return true;
+        }
       } else {
-        auto plain_session = std::static_pointer_cast<Session>(session);
-        plain_session->send(message);
+        auto it = sessions_.find(conn_id);
+        if (it != sessions_.end()) {
+          it->second->send(message);
+          return true;
+        }
       }
 
-      return true;
+      return false;
     }
 
     void broadcast(const std::string &message) {
       std::lock_guard<std::mutex> lock(sessions_mutex_);
-      for (auto &[id, session] : sessions_) {
-        if (use_ssl_) {
-          auto ssl_session = std::static_pointer_cast<SSLSession>(session);
-          ssl_session->send(message);
-        } else {
-          auto plain_session = std::static_pointer_cast<Session>(session);
-          plain_session->send(message);
+      if (use_ssl_) {
+        for (auto &[id, session] : ssl_sessions_) {
+          session->send(message);
+        }
+      } else {
+        for (auto &[id, session] : sessions_) {
+          session->send(message);
         }
       }
     }
 
     void close_connection(ws_connection_id conn_id) {
-      std::shared_ptr<void> session;
-      {
-        std::lock_guard<std::mutex> lock(sessions_mutex_);
-        auto it = sessions_.find(conn_id);
-        if (it == sessions_.end()) {
-          return;
-        }
-        session = it->second;
-        sessions_.erase(it);
-      }
+      std::lock_guard<std::mutex> lock(sessions_mutex_);
 
       if (use_ssl_) {
-        auto ssl_session = std::static_pointer_cast<SSLSession>(session);
-        ssl_session->close();
+        auto it = ssl_sessions_.find(conn_id);
+        if (it != ssl_sessions_.end()) {
+          it->second->close();
+          ssl_sessions_.erase(it);
+        }
       } else {
-        auto plain_session = std::static_pointer_cast<Session>(session);
-        plain_session->close();
+        auto it = sessions_.find(conn_id);
+        if (it != sessions_.end()) {
+          it->second->close();
+          sessions_.erase(it);
+        }
       }
     }
 
@@ -212,7 +250,7 @@ namespace webrtc {
 
     size_t connection_count() const {
       std::lock_guard<std::mutex> lock(sessions_mutex_);
-      return sessions_.size();
+      return use_ssl_ ? ssl_sessions_.size() : sessions_.size();
     }
 
     // Called by sessions
@@ -232,13 +270,14 @@ namespace webrtc {
       {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         sessions_.erase(conn_id);
+        ssl_sessions_.erase(conn_id);
       }
       if (disconnect_callback_) {
         disconnect_callback_(conn_id);
       }
     }
 
-    ws_connection_id register_session(std::shared_ptr<void> session) {
+    ws_connection_id register_session(std::shared_ptr<Session> session) {
       ws_connection_id id = next_conn_id_++;
       {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
@@ -247,11 +286,20 @@ namespace webrtc {
       return id;
     }
 
+    ws_connection_id register_ssl_session(std::shared_ptr<SSLSession> session) {
+      ws_connection_id id = next_conn_id_++;
+      {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        ssl_sessions_[id] = std::move(session);
+      }
+      return id;
+    }
+
   private:
     void do_accept() {
       acceptor_.async_accept(
         net::make_strand(ioc_),
-        beast::bind_front_handler(&Impl::on_accept, shared_from_this()));
+        beast::bind_front_handler(&WebSocketServerImpl::on_accept, shared_from_this()));
     }
 
     void on_accept(beast::error_code ec, tcp::socket socket) {
@@ -286,7 +334,8 @@ namespace webrtc {
     uint16_t port_ = 0;
 
     mutable std::mutex sessions_mutex_;
-    std::unordered_map<ws_connection_id, std::shared_ptr<void>> sessions_;
+    std::unordered_map<ws_connection_id, std::shared_ptr<Session>> sessions_;
+    std::unordered_map<ws_connection_id, std::shared_ptr<SSLSession>> ssl_sessions_;
     std::atomic<ws_connection_id> next_conn_id_;
 
     message_callback_t message_callback_;
@@ -294,205 +343,192 @@ namespace webrtc {
     connection_callback_t disconnect_callback_;
   };
 
-  /**
-   * @brief Plain WebSocket session
-   */
-  class Session : public std::enable_shared_from_this<Session> {
-  public:
-    Session(tcp::socket socket, std::shared_ptr<WebSocketServer::Impl> server) :
-        ws_(std::move(socket)),
-        server_(std::move(server)),
-        conn_id_(0) {}
+  // Session implementation
 
-    void run() {
-      // Set suggested timeout settings for the websocket
-      ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+  Session::Session(tcp::socket socket, std::shared_ptr<WebSocketServerImpl> server) :
+      ws_(std::move(socket)),
+      server_(std::move(server)),
+      conn_id_(0) {}
 
-      // Set a decorator to change the Server header
-      ws_.set_option(websocket::stream_base::decorator([](websocket::response_type &res) {
-        res.set(http::field::server, "Sunshine WebRTC");
-      }));
+  void Session::run() {
+    // Set suggested timeout settings for the websocket
+    ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
 
-      // Accept the websocket handshake
-      ws_.async_accept(beast::bind_front_handler(&Session::on_accept, shared_from_this()));
+    // Set a decorator to change the Server header
+    ws_.set_option(websocket::stream_base::decorator([](websocket::response_type &res) {
+      res.set(http::field::server, "Sunshine WebRTC");
+    }));
+
+    // Accept the websocket handshake
+    ws_.async_accept(beast::bind_front_handler(&Session::on_accept, shared_from_this()));
+  }
+
+  void Session::send(const std::string &message) {
+    net::post(ws_.get_executor(), beast::bind_front_handler(&Session::do_send, shared_from_this(), message));
+  }
+
+  void Session::close() {
+    net::post(ws_.get_executor(), [self = shared_from_this()]() {
+      beast::error_code ec;
+      self->ws_.close(websocket::close_code::normal, ec);
+    });
+  }
+
+  void Session::on_accept(beast::error_code ec) {
+    if (ec) {
+      BOOST_LOG(error) << "WebSocket accept error: " << ec.message();
+      return;
     }
 
-    void send(const std::string &message) {
-      net::post(ws_.get_executor(), beast::bind_front_handler(&Session::do_send, shared_from_this(), message));
+    // Register with server and get connection ID
+    conn_id_ = server_->register_session(shared_from_this());
+    server_->on_connect(conn_id_);
+
+    // Start reading
+    do_read();
+  }
+
+  void Session::do_read() {
+    ws_.async_read(buffer_, beast::bind_front_handler(&Session::on_read, shared_from_this()));
+  }
+
+  void Session::on_read(beast::error_code ec, std::size_t bytes_transferred) {
+    boost::ignore_unused(bytes_transferred);
+
+    if (ec == websocket::error::closed) {
+      server_->on_disconnect(conn_id_);
+      return;
     }
 
-    void close() {
-      net::post(ws_.get_executor(), [self = shared_from_this()]() {
-        beast::error_code ec;
-        self->ws_.close(websocket::close_code::normal, ec);
+    if (ec) {
+      BOOST_LOG(error) << "WebSocket read error: " << ec.message();
+      server_->on_disconnect(conn_id_);
+      return;
+    }
+
+    // Handle the message
+    std::string message = beast::buffers_to_string(buffer_.data());
+    buffer_.consume(buffer_.size());
+    server_->on_message(conn_id_, message);
+
+    // Continue reading
+    do_read();
+  }
+
+  void Session::do_send(const std::string &message) {
+    // Make a copy for the async operation
+    auto msg = std::make_shared<std::string>(message);
+    ws_.async_write(net::buffer(*msg),
+      [self = shared_from_this(), msg](beast::error_code ec, std::size_t) {
+        if (ec) {
+          BOOST_LOG(error) << "WebSocket write error: " << ec.message();
+        }
       });
+  }
+
+  // SSLSession implementation
+
+  SSLSession::SSLSession(tcp::socket socket, ssl::context &ctx, std::shared_ptr<WebSocketServerImpl> server) :
+      ws_(std::move(socket), ctx),
+      server_(std::move(server)),
+      conn_id_(0) {}
+
+  void SSLSession::run() {
+    // Perform the SSL handshake
+    ws_.next_layer().async_handshake(
+      ssl::stream_base::server,
+      beast::bind_front_handler(&SSLSession::on_ssl_handshake, shared_from_this()));
+  }
+
+  void SSLSession::send(const std::string &message) {
+    net::post(ws_.get_executor(), beast::bind_front_handler(&SSLSession::do_send, shared_from_this(), message));
+  }
+
+  void SSLSession::close() {
+    net::post(ws_.get_executor(), [self = shared_from_this()]() {
+      beast::error_code ec;
+      self->ws_.close(websocket::close_code::normal, ec);
+    });
+  }
+
+  void SSLSession::on_ssl_handshake(beast::error_code ec) {
+    if (ec) {
+      BOOST_LOG(error) << "WebSocket SSL handshake error: " << ec.message();
+      return;
     }
 
-  private:
-    void on_accept(beast::error_code ec) {
-      if (ec) {
-        BOOST_LOG(error) << "WebSocket accept error: " << ec.message();
-        return;
-      }
+    // Set suggested timeout settings for the websocket
+    ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
 
-      // Register with server and get connection ID
-      conn_id_ = server_->register_session(shared_from_this());
-      server_->on_connect(conn_id_);
+    // Set a decorator to change the Server header
+    ws_.set_option(websocket::stream_base::decorator([](websocket::response_type &res) {
+      res.set(http::field::server, "Sunshine WebRTC");
+    }));
 
-      // Start reading
-      do_read();
+    // Accept the websocket handshake
+    ws_.async_accept(beast::bind_front_handler(&SSLSession::on_accept, shared_from_this()));
+  }
+
+  void SSLSession::on_accept(beast::error_code ec) {
+    if (ec) {
+      BOOST_LOG(error) << "WebSocket accept error: " << ec.message();
+      return;
     }
 
-    void do_read() {
-      ws_.async_read(buffer_, beast::bind_front_handler(&Session::on_read, shared_from_this()));
+    // Register with server and get connection ID
+    conn_id_ = server_->register_ssl_session(shared_from_this());
+    server_->on_connect(conn_id_);
+
+    // Start reading
+    do_read();
+  }
+
+  void SSLSession::do_read() {
+    ws_.async_read(buffer_, beast::bind_front_handler(&SSLSession::on_read, shared_from_this()));
+  }
+
+  void SSLSession::on_read(beast::error_code ec, std::size_t bytes_transferred) {
+    boost::ignore_unused(bytes_transferred);
+
+    if (ec == websocket::error::closed) {
+      server_->on_disconnect(conn_id_);
+      return;
     }
 
-    void on_read(beast::error_code ec, std::size_t bytes_transferred) {
-      boost::ignore_unused(bytes_transferred);
-
-      if (ec == websocket::error::closed) {
-        server_->on_disconnect(conn_id_);
-        return;
-      }
-
-      if (ec) {
-        BOOST_LOG(error) << "WebSocket read error: " << ec.message();
-        server_->on_disconnect(conn_id_);
-        return;
-      }
-
-      // Handle the message
-      std::string message = beast::buffers_to_string(buffer_.data());
-      buffer_.consume(buffer_.size());
-      server_->on_message(conn_id_, message);
-
-      // Continue reading
-      do_read();
+    if (ec) {
+      BOOST_LOG(error) << "WebSocket read error: " << ec.message();
+      server_->on_disconnect(conn_id_);
+      return;
     }
 
-    void do_send(const std::string &message) {
-      // Make a copy for the async operation
-      auto msg = std::make_shared<std::string>(message);
-      ws_.async_write(net::buffer(*msg),
-        [self = shared_from_this(), msg](beast::error_code ec, std::size_t) {
-          if (ec) {
-            BOOST_LOG(error) << "WebSocket write error: " << ec.message();
-          }
-        });
-    }
+    // Handle the message
+    std::string message = beast::buffers_to_string(buffer_.data());
+    buffer_.consume(buffer_.size());
+    server_->on_message(conn_id_, message);
 
-    websocket::stream<beast::tcp_stream> ws_;
-    std::shared_ptr<WebSocketServer::Impl> server_;
-    beast::flat_buffer buffer_;
-    ws_connection_id conn_id_;
-  };
+    // Continue reading
+    do_read();
+  }
 
-  /**
-   * @brief SSL WebSocket session
-   */
-  class SSLSession : public std::enable_shared_from_this<SSLSession> {
-  public:
-    SSLSession(tcp::socket socket, ssl::context &ctx, std::shared_ptr<WebSocketServer::Impl> server) :
-        ws_(std::move(socket), ctx),
-        server_(std::move(server)),
-        conn_id_(0) {}
-
-    void run() {
-      // Perform the SSL handshake
-      ws_.next_layer().async_handshake(
-        ssl::stream_base::server,
-        beast::bind_front_handler(&SSLSession::on_ssl_handshake, shared_from_this()));
-    }
-
-    void send(const std::string &message) {
-      net::post(ws_.get_executor(), beast::bind_front_handler(&SSLSession::do_send, shared_from_this(), message));
-    }
-
-    void close() {
-      net::post(ws_.get_executor(), [self = shared_from_this()]() {
-        beast::error_code ec;
-        self->ws_.close(websocket::close_code::normal, ec);
+  void SSLSession::do_send(const std::string &message) {
+    // Make a copy for the async operation
+    auto msg = std::make_shared<std::string>(message);
+    ws_.async_write(net::buffer(*msg),
+      [self = shared_from_this(), msg](beast::error_code ec, std::size_t) {
+        if (ec) {
+          BOOST_LOG(error) << "WebSocket write error: " << ec.message();
+        }
       });
-    }
+  }
 
-  private:
-    void on_ssl_handshake(beast::error_code ec) {
-      if (ec) {
-        BOOST_LOG(error) << "WebSocket SSL handshake error: " << ec.message();
-        return;
-      }
+  // WebSocketServer PIMPL wrapper - stores shared_ptr to Impl
 
-      // Set suggested timeout settings for the websocket
-      ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+  class WebSocketServer::Impl {
+  public:
+    std::shared_ptr<WebSocketServerImpl> server;
 
-      // Set a decorator to change the Server header
-      ws_.set_option(websocket::stream_base::decorator([](websocket::response_type &res) {
-        res.set(http::field::server, "Sunshine WebRTC");
-      }));
-
-      // Accept the websocket handshake
-      ws_.async_accept(beast::bind_front_handler(&SSLSession::on_accept, shared_from_this()));
-    }
-
-    void on_accept(beast::error_code ec) {
-      if (ec) {
-        BOOST_LOG(error) << "WebSocket accept error: " << ec.message();
-        return;
-      }
-
-      // Register with server and get connection ID
-      conn_id_ = server_->register_session(shared_from_this());
-      server_->on_connect(conn_id_);
-
-      // Start reading
-      do_read();
-    }
-
-    void do_read() {
-      ws_.async_read(buffer_, beast::bind_front_handler(&SSLSession::on_read, shared_from_this()));
-    }
-
-    void on_read(beast::error_code ec, std::size_t bytes_transferred) {
-      boost::ignore_unused(bytes_transferred);
-
-      if (ec == websocket::error::closed) {
-        server_->on_disconnect(conn_id_);
-        return;
-      }
-
-      if (ec) {
-        BOOST_LOG(error) << "WebSocket read error: " << ec.message();
-        server_->on_disconnect(conn_id_);
-        return;
-      }
-
-      // Handle the message
-      std::string message = beast::buffers_to_string(buffer_.data());
-      buffer_.consume(buffer_.size());
-      server_->on_message(conn_id_, message);
-
-      // Continue reading
-      do_read();
-    }
-
-    void do_send(const std::string &message) {
-      // Make a copy for the async operation
-      auto msg = std::make_shared<std::string>(message);
-      ws_.async_write(net::buffer(*msg),
-        [self = shared_from_this(), msg](beast::error_code ec, std::size_t) {
-          if (ec) {
-            BOOST_LOG(error) << "WebSocket write error: " << ec.message();
-          }
-        });
-    }
-
-    websocket::stream<beast::ssl_stream<beast::tcp_stream>> ws_;
-    std::shared_ptr<WebSocketServer::Impl> server_;
-    beast::flat_buffer buffer_;
-    ws_connection_id conn_id_;
+    Impl() : server(std::make_shared<WebSocketServerImpl>()) {}
   };
-
-  // WebSocketServer implementation
 
   WebSocketServer::WebSocketServer() :
       impl_(std::make_unique<Impl>()) {}
@@ -502,43 +538,43 @@ namespace webrtc {
   bool WebSocketServer::start(uint16_t port, bool use_ssl,
                               const std::string &cert_path,
                               const std::string &key_path) {
-    return impl_->start(port, use_ssl, cert_path, key_path);
+    return impl_->server->start(port, use_ssl, cert_path, key_path);
   }
 
   void WebSocketServer::stop() {
-    impl_->stop();
+    impl_->server->stop();
   }
 
   bool WebSocketServer::is_running() const {
-    return impl_->is_running();
+    return impl_->server->is_running();
   }
 
   bool WebSocketServer::send(ws_connection_id conn_id, const std::string &message) {
-    return impl_->send(conn_id, message);
+    return impl_->server->send(conn_id, message);
   }
 
   void WebSocketServer::broadcast(const std::string &message) {
-    impl_->broadcast(message);
+    impl_->server->broadcast(message);
   }
 
   void WebSocketServer::close_connection(ws_connection_id conn_id) {
-    impl_->close_connection(conn_id);
+    impl_->server->close_connection(conn_id);
   }
 
   void WebSocketServer::set_message_callback(message_callback_t callback) {
-    impl_->set_message_callback(std::move(callback));
+    impl_->server->set_message_callback(std::move(callback));
   }
 
   void WebSocketServer::set_connect_callback(connection_callback_t callback) {
-    impl_->set_connect_callback(std::move(callback));
+    impl_->server->set_connect_callback(std::move(callback));
   }
 
   void WebSocketServer::set_disconnect_callback(connection_callback_t callback) {
-    impl_->set_disconnect_callback(std::move(callback));
+    impl_->server->set_disconnect_callback(std::move(callback));
   }
 
   size_t WebSocketServer::connection_count() const {
-    return impl_->connection_count();
+    return impl_->server->connection_count();
   }
 
   // Global instance

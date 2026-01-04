@@ -111,7 +111,7 @@ namespace webrtc {
       // packet_t is std::pair<void*, buffer_t>
       const auto &buffer = packet->second;
       if (buffer.size() > 0) {
-        process_packet(buffer.data(), buffer.size(), timestamp);
+        process_packet(buffer.begin(), buffer.size(), timestamp);
         timestamp += samples_per_packet;
       }
     }
