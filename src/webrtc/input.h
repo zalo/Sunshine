@@ -32,21 +32,21 @@ namespace webrtc {
    * @brief Gamepad button flags (matches Moonlight/Sunshine protocol).
    */
   enum GamepadButton : uint16_t {
-    DPAD_UP = 0x0001,
-    DPAD_DOWN = 0x0002,
-    DPAD_LEFT = 0x0004,
-    DPAD_RIGHT = 0x0008,
-    START = 0x0010,
-    BACK = 0x0020,
-    LEFT_STICK = 0x0040,
-    RIGHT_STICK = 0x0080,
-    LEFT_SHOULDER = 0x0100,
-    RIGHT_SHOULDER = 0x0200,
-    HOME = 0x0400,
-    A = 0x1000,
-    B = 0x2000,
-    X = 0x4000,
-    Y = 0x8000
+    DPAD_UP = 0x0001,         ///< D-pad up button
+    DPAD_DOWN = 0x0002,       ///< D-pad down button
+    DPAD_LEFT = 0x0004,       ///< D-pad left button
+    DPAD_RIGHT = 0x0008,      ///< D-pad right button
+    START = 0x0010,           ///< Start/Menu button
+    BACK = 0x0020,            ///< Back/View button
+    LEFT_STICK = 0x0040,      ///< Left stick click (L3)
+    RIGHT_STICK = 0x0080,     ///< Right stick click (R3)
+    LEFT_SHOULDER = 0x0100,   ///< Left shoulder button (LB)
+    RIGHT_SHOULDER = 0x0200,  ///< Right shoulder button (RB)
+    HOME = 0x0400,            ///< Home/Guide button
+    A = 0x1000,               ///< A/Cross button
+    B = 0x2000,               ///< B/Circle button
+    X = 0x4000,               ///< X/Square button
+    Y = 0x8000                ///< Y/Triangle button
   };
 
   /**
