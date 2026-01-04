@@ -70,9 +70,41 @@ namespace webrtc {
 
       // If username/password provided, add credentials
       if (!config_vars.webrtc.turn_username.empty()) {
-        rtc::IceServer turn_server(turn_url, config_vars.webrtc.turn_username, config_vars.webrtc.turn_password);
+        // Parse the TURN URL to extract hostname and port
+        // Expected format: turn:hostname:port or turns:hostname:port
+        std::string hostname;
+        std::string port_str = "3478";  // Default TURN port
+        rtc::IceServer::RelayType relay_type = rtc::IceServer::RelayType::TurnUdp;
+
+        // Check for turns: (TLS)
+        if (turn_url.find("turns:") == 0) {
+          relay_type = rtc::IceServer::RelayType::TurnTls;
+          hostname = turn_url.substr(6);  // Skip "turns:"
+          port_str = "5349";  // Default TURNS port
+        }
+        else if (turn_url.find("turn:") == 0) {
+          hostname = turn_url.substr(5);  // Skip "turn:"
+        }
+        else {
+          hostname = turn_url;
+        }
+
+        // Extract port if present (hostname:port format)
+        auto colon_pos = hostname.find(':');
+        if (colon_pos != std::string::npos) {
+          port_str = hostname.substr(colon_pos + 1);
+          hostname = hostname.substr(0, colon_pos);
+        }
+
+        rtc::IceServer turn_server(
+          hostname,
+          port_str,
+          config_vars.webrtc.turn_username,
+          config_vars.webrtc.turn_password,
+          relay_type
+        );
         rtc_config.iceServers.push_back(turn_server);
-        BOOST_LOG(info) << "WebRTC: Using TURN server: " << turn_url << " with credentials";
+        BOOST_LOG(info) << "WebRTC: Using TURN server: " << hostname << ":" << port_str << " with credentials";
       }
       else {
         rtc_config.iceServers.emplace_back(turn_url);
