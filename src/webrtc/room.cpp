@@ -57,17 +57,17 @@ namespace webrtc {
         host_peer_id_(host_peer->id()),
         created_at_(std::chrono::steady_clock::now()) {
     // Add host as Player 1
-    PlayerInfo host_info;
-    host_info.peer_id = host_peer->id();
-    host_info.name = host_name;
-    host_info.slot = PlayerSlot::PLAYER_1;
-    host_info.is_host = true;
-    host_info.is_spectator = false;
-    host_info.can_use_keyboard = true;
-    host_info.can_use_mouse = true;
-    host_info.connected_at = created_at_;
+    PlayerInfo player_info;
+    player_info.peer_id = host_peer->id();
+    player_info.name = host_name;
+    player_info.slot = PlayerSlot::PLAYER_1;
+    player_info.is_host = true;
+    player_info.is_spectator = false;
+    player_info.can_use_keyboard = true;
+    player_info.can_use_mouse = true;
+    player_info.connected_at = created_at_;
 
-    players_[host_peer->id()] = host_info;
+    players_[host_peer->id()] = player_info;
     peers_[host_peer->id()] = host_peer;
 
     BOOST_LOG(info) << "Room " << code_ << " created by " << host_name;
@@ -103,17 +103,17 @@ namespace webrtc {
       return false;
     }
 
-    PlayerInfo info;
-    info.peer_id = peer->id();
-    info.name = name;
-    info.slot = PlayerSlot::NONE;
-    info.is_host = false;
-    info.is_spectator = true;
-    info.can_use_keyboard = false;
-    info.can_use_mouse = false;
-    info.connected_at = std::chrono::steady_clock::now();
+    PlayerInfo player_info;
+    player_info.peer_id = peer->id();
+    player_info.name = name;
+    player_info.slot = PlayerSlot::NONE;
+    player_info.is_host = false;
+    player_info.is_spectator = true;
+    player_info.can_use_keyboard = false;
+    player_info.can_use_mouse = false;
+    player_info.connected_at = std::chrono::steady_clock::now();
 
-    players_[peer->id()] = info;
+    players_[peer->id()] = player_info;
     peers_[peer->id()] = peer;
 
     BOOST_LOG(info) << "Spectator " << name << " joined room " << code_;

@@ -36,11 +36,11 @@ namespace webrtc {
 
     BOOST_LOG(info) << "Initializing WebRTC module";
 
-    // Read configuration
-    auto &config_vars = config::sunshine;
+    // Read configuration (use global config namespace)
+    auto &config_vars = ::config::sunshine;
 
     // Check if WebRTC is enabled
-    enabled = config_vars.flags[config::flag::WEBRTC_ENABLED];
+    enabled = config_vars.flags[::config::flag::WEBRTC_ENABLED];
     if (!enabled) {
       BOOST_LOG(info) << "WebRTC streaming disabled in configuration";
       initialized = true;
@@ -70,10 +70,7 @@ namespace webrtc {
 
       // If username/password provided, add credentials
       if (!config_vars.webrtc.turn_username.empty()) {
-        rtc::IceServer turn_server;
-        turn_server.hostname = turn_url;
-        turn_server.username = config_vars.webrtc.turn_username;
-        turn_server.password = config_vars.webrtc.turn_password;
+        rtc::IceServer turn_server(turn_url, config_vars.webrtc.turn_username, config_vars.webrtc.turn_password);
         rtc_config.iceServers.push_back(turn_server);
         BOOST_LOG(info) << "WebRTC: Using TURN server: " << turn_url << " with credentials";
       }

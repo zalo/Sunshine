@@ -234,6 +234,9 @@ namespace webrtc {
     mutable std::mutex stats_mutex_;
     Stats stats_;
 
+    // SSRC for media streams
+    uint32_t ssrc_ = 0;
+
     void
     setup_peer_connection();
 
