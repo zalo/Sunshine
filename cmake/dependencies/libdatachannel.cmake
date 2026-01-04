@@ -1,7 +1,7 @@
 # libdatachannel dependency for WebRTC support
 
 # Options for libdatachannel
-set(NO_WEBSOCKET ON CACHE BOOL "Disable WebSocket support in libdatachannel")
+set(NO_WEBSOCKET OFF CACHE BOOL "Disable WebSocket support in libdatachannel")
 set(NO_EXAMPLES ON CACHE BOOL "Disable examples")
 set(NO_TESTS ON CACHE BOOL "Disable tests")
 set(USE_NICE OFF CACHE BOOL "Use libnice instead of libjuice")
