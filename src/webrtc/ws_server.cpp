@@ -174,8 +174,8 @@ namespace webrtc {
         }
       });
 
-      ws->onError([this, conn_id](const std::string &error) {
-        BOOST_LOG(error) << "WebSocket connection " << conn_id << " error: " << error;
+      ws->onError([this, conn_id](const std::string &err_msg) {
+        BOOST_LOG(error) << "WebSocket connection " << conn_id << " error: " << err_msg;
         {
           std::lock_guard<std::mutex> lock(connections_mutex_);
           connections_.erase(conn_id);
