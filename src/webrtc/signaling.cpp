@@ -55,8 +55,8 @@ namespace webrtc {
     // This makes it ::config::sunshine.port + PORT_WEBRTC_WS
     uint16_t ws_port = static_cast<uint16_t>(::config::sunshine.port + PORT_WEBRTC_WS);
 
-    // Use SSL with Sunshine's existing certificates
-    bool use_ssl = true;
+    // Use SSL with Sunshine's existing certificates (configurable)
+    bool use_ssl = ::config::sunshine.webrtc.signaling_ssl;
     std::string cert_path = ::config::nvhttp.cert;
     std::string key_path = ::config::nvhttp.pkey;
 

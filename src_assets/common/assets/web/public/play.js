@@ -40,15 +40,26 @@ class SunshineWebRTC {
     };
     this.statsIntervalId = null;
 
+    // Pending messages queue (for SDP/ICE that arrive before peer connection is ready)
+    this.pendingMessages = [];
+
     // UI elements
     this.elements = {};
 
     // Configuration
-    // WebSocket signaling runs on the main port + 1
-    const wsPort = parseInt(window.location.port || '47990') + 1;
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Determine signaling URL based on access method
+    let signalingUrl;
+    if (window.location.hostname.endsWith('.sels.tech')) {
+      // Use sibling subdomain for Cloudflare tunnel (deep subdomains don't get SSL certs)
+      signalingUrl = 'wss://sunshine-signaling.sels.tech';
+    } else {
+      // Local access - WebSocket signaling runs on the main port + 1
+      const wsPort = parseInt(window.location.port || '47990') + 1;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      signalingUrl = `${wsProtocol}//${window.location.hostname}:${wsPort}`;
+    }
     this.config = {
-      signalingUrl: `${wsProtocol}//${window.location.hostname}:${wsPort}`,
+      signalingUrl,
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' }
@@ -280,6 +291,9 @@ class SunshineWebRTC {
     this.isHost = true;
     this.players = msg.players || [];
 
+    // Initialize peer connection immediately - server sends SDP right after room creation
+    this.initPeerConnection();
+
     this.showStreamUI();
     this.updateRoomUI();
   }
@@ -291,6 +305,9 @@ class SunshineWebRTC {
     this.playerSlot = msg.slot || 0;
     this.isHost = msg.is_host || false;
     this.players = msg.players || [];
+
+    // Initialize peer connection immediately - server sends SDP right after room join
+    this.initPeerConnection();
 
     this.showStreamUI();
     this.updateRoomUI();
@@ -373,15 +390,23 @@ class SunshineWebRTC {
       }
     };
 
-    // Create data channel for input
-    this.dataChannel = this.pc.createDataChannel('input', {
-      ordered: false,
-      maxRetransmits: 0
-    });
-    this.setupDataChannel(this.dataChannel);
+    // Note: Server creates the offer, so we don't create one here.
+    // Data channel will be received via ondatachannel event.
 
-    // Create offer
-    this.createOffer();
+    // Process any queued messages that arrived before peer connection was ready
+    this.processPendingMessages();
+  }
+
+  async processPendingMessages() {
+    console.log(`Processing ${this.pendingMessages.length} pending messages`);
+    for (const pending of this.pendingMessages) {
+      if (pending.type === 'sdp') {
+        await this.handleRemoteSDP(pending.msg);
+      } else if (pending.type === 'ice') {
+        await this.handleRemoteICE(pending.msg);
+      }
+    }
+    this.pendingMessages = [];
   }
 
   setupDataChannel(channel) {
@@ -442,6 +467,12 @@ class SunshineWebRTC {
 
   async handleRemoteSDP(msg) {
     try {
+      if (!this.pc) {
+        console.log('Queueing SDP (peer connection not ready yet)');
+        this.pendingMessages.push({ type: 'sdp', msg });
+        return;
+      }
+
       const desc = new RTCSessionDescription({
         type: msg.sdp_type || 'answer',
         sdp: msg.sdp
@@ -452,7 +483,7 @@ class SunshineWebRTC {
         const answer = await this.pc.createAnswer();
         await this.pc.setLocalDescription(answer);
         this.sendSignaling('sdp', {
-          type: 'answer',
+          sdp_type: 'answer',
           sdp: answer.sdp
         });
       }
@@ -463,9 +494,16 @@ class SunshineWebRTC {
 
   async handleRemoteICE(msg) {
     try {
+      if (!this.pc) {
+        // Queue ICE candidates that arrive before peer connection is ready
+        this.pendingMessages.push({ type: 'ice', msg });
+        return;
+      }
+
+      // Server sends 'mid', RTCIceCandidate expects 'sdpMid'
       const candidate = new RTCIceCandidate({
         candidate: msg.candidate,
-        sdpMid: msg.sdpMid,
+        sdpMid: msg.sdpMid || msg.mid,
         sdpMLineIndex: msg.sdpMLineIndex
       });
       await this.pc.addIceCandidate(candidate);

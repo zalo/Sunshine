@@ -242,6 +242,7 @@ namespace config {
     std::string turn_username;   ///< TURN server username
     std::string turn_password;   ///< TURN server password
     int max_players;             ///< Maximum number of players (1-4)
+    bool signaling_ssl;          ///< Use SSL for WebSocket signaling (default: true)
   };
 
   struct sunshine_t {

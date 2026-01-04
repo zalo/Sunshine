@@ -589,6 +589,7 @@ namespace config {
       {},  // turn_username
       {},  // turn_password
       4,  // max_players
+      true,  // signaling_ssl
     },
   };
 
@@ -1275,6 +1276,7 @@ namespace config {
     string_f(vars, "webrtc_turn_username"s, config::sunshine.webrtc.turn_username);
     string_f(vars, "webrtc_turn_password"s, config::sunshine.webrtc.turn_password);
     int_between_f(vars, "webrtc_max_players"s, config::sunshine.webrtc.max_players, {1, 4});
+    bool_f(vars, "webrtc_signaling_ssl"s, config::sunshine.webrtc.signaling_ssl);
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian

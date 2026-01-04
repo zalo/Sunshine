@@ -13,7 +13,9 @@ namespace webrtc {
 
   std::shared_ptr<Peer>
   Peer::create(const std::string &id, const rtc::Configuration &config) {
-    return std::make_shared<Peer>(id, config);
+    auto peer = std::make_shared<Peer>(id, config);
+    peer->setup_peer_connection();  // Must be called after shared_ptr is created for weak_from_this()
+    return peer;
   }
 
   Peer::Peer(const std::string &id, const rtc::Configuration &config)
@@ -25,7 +27,8 @@ namespace webrtc {
     std::uniform_int_distribution<uint32_t> dist;
     ssrc_ = dist(gen);
 
-    setup_peer_connection();
+    // NOTE: setup_peer_connection() is called from create() after shared_ptr is constructed
+    // This is required for weak_from_this() to work in callbacks
 
     BOOST_LOG(info) << "WebRTC peer " << id_ << " created";
   }
@@ -39,7 +42,17 @@ namespace webrtc {
   Peer::setup_peer_connection() {
     pc_ = std::make_unique<rtc::PeerConnection>(config_);
 
-    pc_->onStateChange([this](rtc::PeerConnection::State state) {
+    // Capture weak_ptr to prevent use-after-free when callbacks fire after peer destruction
+    std::weak_ptr<Peer> weak_self = weak_from_this();
+    std::string peer_id = id_;  // Copy for safe logging
+
+    pc_->onStateChange([weak_self, peer_id](rtc::PeerConnection::State state) {
+      auto self = weak_self.lock();
+      if (!self) {
+        BOOST_LOG(debug) << "Peer " << peer_id << " state change callback ignored (peer destroyed)";
+        return;
+      }
+
       PeerState new_state;
       switch (state) {
         case rtc::PeerConnection::State::New:
@@ -60,38 +73,57 @@ namespace webrtc {
           new_state = PeerState::CONNECTING;
       }
 
-      state_.store(new_state);
+      self->state_.store(new_state);
 
-      BOOST_LOG(debug) << "Peer " << id_ << " state changed to " << static_cast<int>(new_state);
+      BOOST_LOG(debug) << "Peer " << peer_id << " state changed to " << static_cast<int>(new_state);
 
-      if (on_state_change_) {
-        on_state_change_(new_state);
+      if (self->on_state_change_) {
+        self->on_state_change_(new_state);
       }
     });
 
-    pc_->onLocalDescription([this](rtc::Description description) {
-      BOOST_LOG(debug) << "Peer " << id_ << " local description generated";
+    pc_->onLocalDescription([weak_self, peer_id](rtc::Description description) {
+      auto self = weak_self.lock();
+      if (!self) {
+        BOOST_LOG(debug) << "Peer " << peer_id << " local description callback ignored (peer destroyed)";
+        return;
+      }
 
-      if (on_local_description_) {
-        on_local_description_(std::string(description), description.typeString());
+      BOOST_LOG(debug) << "Peer " << peer_id << " local description generated";
+
+      if (self->on_local_description_) {
+        self->on_local_description_(std::string(description), description.typeString());
       }
     });
 
-    pc_->onLocalCandidate([this](rtc::Candidate candidate) {
-      BOOST_LOG(debug) << "Peer " << id_ << " local ICE candidate: " << std::string(candidate);
+    pc_->onLocalCandidate([weak_self, peer_id](rtc::Candidate candidate) {
+      auto self = weak_self.lock();
+      if (!self) {
+        BOOST_LOG(debug) << "Peer " << peer_id << " local candidate callback ignored (peer destroyed)";
+        return;
+      }
 
-      if (on_local_candidate_) {
-        on_local_candidate_(std::string(candidate), candidate.mid());
+      BOOST_LOG(debug) << "Peer " << peer_id << " local ICE candidate: " << std::string(candidate);
+
+      if (self->on_local_candidate_) {
+        self->on_local_candidate_(std::string(candidate), candidate.mid());
       }
     });
 
-    pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> channel) {
-      BOOST_LOG(debug) << "Peer " << id_ << " received data channel: " << channel->label();
-      handle_data_channel(channel);
+    pc_->onDataChannel([weak_self, peer_id](std::shared_ptr<rtc::DataChannel> channel) {
+      auto self = weak_self.lock();
+      if (!self) {
+        BOOST_LOG(debug) << "Peer " << peer_id << " data channel callback ignored (peer destroyed)";
+        return;
+      }
+
+      BOOST_LOG(debug) << "Peer " << peer_id << " received data channel: " << channel->label();
+      self->handle_data_channel(channel);
     });
 
-    pc_->onTrack([this](std::shared_ptr<rtc::Track> track) {
-      BOOST_LOG(debug) << "Peer " << id_ << " received track: " << track->mid();
+    pc_->onTrack([peer_id](std::shared_ptr<rtc::Track> track) {
+      // This callback only logs, no need to access Peer state
+      BOOST_LOG(debug) << "Peer " << peer_id << " received track: " << track->mid();
     });
   }
 
@@ -195,12 +227,15 @@ namespace webrtc {
 
       video_track_ = pc_->addTrack(video);
 
-      video_track_->onOpen([this]() {
-        BOOST_LOG(info) << "Peer " << id_ << " video track opened";
+      // Copy id for safe callbacks
+      std::string peer_id = id_;
+
+      video_track_->onOpen([peer_id]() {
+        BOOST_LOG(info) << "Peer " << peer_id << " video track opened";
       });
 
-      video_track_->onClosed([this]() {
-        BOOST_LOG(info) << "Peer " << id_ << " video track closed";
+      video_track_->onClosed([peer_id]() {
+        BOOST_LOG(info) << "Peer " << peer_id << " video track closed";
       });
 
       BOOST_LOG(info) << "Peer " << id_ << " added video track (" << codec << ")";
@@ -229,12 +264,15 @@ namespace webrtc {
 
       audio_track_ = pc_->addTrack(audio);
 
-      audio_track_->onOpen([this]() {
-        BOOST_LOG(info) << "Peer " << id_ << " audio track opened";
+      // Copy id for safe callbacks
+      std::string peer_id = id_;
+
+      audio_track_->onOpen([peer_id]() {
+        BOOST_LOG(info) << "Peer " << peer_id << " audio track opened";
       });
 
-      audio_track_->onClosed([this]() {
-        BOOST_LOG(info) << "Peer " << id_ << " audio track closed";
+      audio_track_->onClosed([peer_id]() {
+        BOOST_LOG(info) << "Peer " << peer_id << " audio track closed";
       });
 
       BOOST_LOG(info) << "Peer " << id_ << " added audio track (Opus)";
@@ -312,28 +350,38 @@ namespace webrtc {
   Peer::handle_data_channel(std::shared_ptr<rtc::DataChannel> channel) {
     std::string label = channel->label();
 
-    channel->onOpen([this, label]() {
-      BOOST_LOG(info) << "Peer " << id_ << " data channel '" << label << "' opened";
+    // Capture weak_ptr and copy id for safe callbacks
+    std::weak_ptr<Peer> weak_self = weak_from_this();
+    std::string peer_id = id_;
+
+    channel->onOpen([peer_id, label]() {
+      BOOST_LOG(info) << "Peer " << peer_id << " data channel '" << label << "' opened";
     });
 
-    channel->onClosed([this, label]() {
-      BOOST_LOG(info) << "Peer " << id_ << " data channel '" << label << "' closed";
+    channel->onClosed([peer_id, label]() {
+      BOOST_LOG(info) << "Peer " << peer_id << " data channel '" << label << "' closed";
     });
 
-    channel->onMessage([this, label](rtc::message_variant data) {
+    channel->onMessage([weak_self, peer_id, label](rtc::message_variant data) {
+      auto self = weak_self.lock();
+      if (!self) {
+        BOOST_LOG(debug) << "Peer " << peer_id << " data channel message ignored (peer destroyed)";
+        return;
+      }
+
       if (std::holds_alternative<std::string>(data)) {
         // Text message
         const auto &msg = std::get<std::string>(data);
-        auto it = message_callbacks_.find(label);
-        if (it != message_callbacks_.end() && it->second) {
+        auto it = self->message_callbacks_.find(label);
+        if (it != self->message_callbacks_.end() && it->second) {
           it->second(msg);
         }
       }
       else {
         // Binary message
         const auto &binary = std::get<rtc::binary>(data);
-        auto it = binary_callbacks_.find(label);
-        if (it != binary_callbacks_.end() && it->second) {
+        auto it = self->binary_callbacks_.find(label);
+        if (it != self->binary_callbacks_.end() && it->second) {
           it->second(binary);
         }
       }
