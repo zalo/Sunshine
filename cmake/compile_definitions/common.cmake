@@ -119,6 +119,22 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/stat_trackers.cpp"
         "${CMAKE_SOURCE_DIR}/src/rswrapper.h"
         "${CMAKE_SOURCE_DIR}/src/rswrapper.c"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/webrtc.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/webrtc.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/room.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/room.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/peer.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/peer.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/signaling.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/signaling.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/input.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/video_sender.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/video_sender.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/audio_sender.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/audio_sender.cpp"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/ws_server.h"
+        "${CMAKE_SOURCE_DIR}/src/webrtc/ws_server.cpp"
         ${PLATFORM_TARGET_FILES})
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
@@ -157,3 +173,10 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${Boost_LIBRARIES}
         ${OPENSSL_LIBRARIES}
         ${PLATFORM_LIBRARIES})
+
+# Add libdatachannel for WebRTC support if available
+if(TARGET datachannel-static)
+    list(APPEND SUNSHINE_EXTERNAL_LIBRARIES datachannel-static)
+    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_WEBRTC_ENABLED=1)
+    message(STATUS "WebRTC support enabled")
+endif()

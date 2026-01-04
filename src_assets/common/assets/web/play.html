@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Sunshine WebRTC Player</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ecdc4;
+            --warning: #f39c12;
+            --border: #2a2a4a;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        /* Video Container */
+        #videoContainer {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #videoElement {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        /* Overlay when not streaming */
+        #startOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        #start-overlay.hidden {
+            display: none;
+        }
+
+        .start-content {
+            text-align: center;
+            max-width: 400px;
+            padding: 2rem;
+        }
+
+        .start-content h1 {
+            font-size: 2rem;
+            margin-bottom: 1.5rem;
+            color: var(--text-primary);
+        }
+
+        .start-content p {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+        }
+
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .input-group input.room-code {
+            text-transform: uppercase;
+            letter-spacing: 0.25rem;
+            font-size: 1.5rem;
+            text-align: center;
+            font-family: monospace;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: #1a1a2e;
+        }
+
+        .btn-success:hover {
+            filter: brightness(1.1);
+        }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 1.5rem 0;
+            color: var(--text-secondary);
+        }
+
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        .divider span {
+            padding: 0 1rem;
+        }
+
+        /* Sidebar */
+        #sidebar {
+            position: fixed;
+            top: 0;
+            right: -320px;
+            width: 320px;
+            height: 100%;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            z-index: 200;
+            transition: right 0.3s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #sidebar.open {
+            right: 0;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-header h2 {
+            font-size: 1.2rem;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .close-btn:hover {
+            color: var(--text-primary);
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .sidebar-section {
+            margin-bottom: 1.5rem;
+        }
+
+        .sidebar-section h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            letter-spacing: 0.05rem;
+        }
+
+        /* Room Code Display */
+        .room-code-display {
+            background: var(--bg-tertiary);
+            padding: 1rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .room-code-display .code {
+            font-size: 1.75rem;
+            font-family: monospace;
+            letter-spacing: 0.25rem;
+            color: var(--accent);
+            margin-bottom: 0.5rem;
+        }
+
+        .room-code-display .copy-btn {
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+        }
+
+        /* Player List */
+        .player-list {
+            list-style: none;
+        }
+
+        .player-item {
+            display: flex;
+            align-items: center;
+            padding: 0.75rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+
+        .player-slot {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--accent);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin-right: 0.75rem;
+        }
+
+        .player-slot.spectator {
+            background: var(--text-secondary);
+        }
+
+        .player-info {
+            flex: 1;
+        }
+
+        .player-name {
+            font-weight: 500;
+        }
+
+        .player-badges {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.25rem;
+        }
+
+        .badge {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        .badge-host {
+            background: var(--accent);
+        }
+
+        .badge-spectator {
+            background: var(--text-secondary);
+            color: var(--bg-primary);
+        }
+
+        .badge-gamepad {
+            background: var(--success);
+            color: var(--bg-primary);
+        }
+
+        /* Toggle button */
+        #sidebarToggle {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            cursor: pointer;
+            z-index: 250;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            opacity: 0.5;
+        }
+
+        #sidebarToggle:hover {
+            background: var(--bg-tertiary);
+            opacity: 1;
+        }
+
+        /* Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+
+        .stat-item {
+            background: var(--bg-tertiary);
+            padding: 0.5rem;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Permissions */
+        .permission-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 24px;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-secondary);
+            border-radius: 24px;
+            transition: 0.3s;
+        }
+
+        .toggle-slider::before {
+            position: absolute;
+            content: '';
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background: var(--text-primary);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--success);
+        }
+
+        .toggle-switch input:checked + .toggle-slider::before {
+            transform: translateX(24px);
+        }
+
+        /* Join as Player button */
+        .join-player-section {
+            text-align: center;
+            padding: 1rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+        }
+
+        /* Status messages */
+        .status-message {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            z-index: 300;
+            animation: fadeIn 0.3s;
+        }
+
+        .status-message.error {
+            border-color: var(--accent);
+        }
+
+        .status-message.success {
+            border-color: var(--success);
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+
+        /* Gamepad indicator */
+        .gamepad-indicator {
+            position: fixed;
+            bottom: 1rem;
+            left: 1rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            z-index: 150;
+            opacity: 0.5;
+            transition: opacity 0.2s;
+        }
+
+        .gamepad-indicator:hover {
+            opacity: 1;
+        }
+
+        .gamepad-indicator.active {
+            border-color: var(--success);
+            opacity: 1;
+        }
+
+        /* Fullscreen button */
+        #fullscreenBtn {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            cursor: pointer;
+            z-index: 150;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #fullscreenBtn:hover {
+            opacity: 1;
+        }
+
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            z-index: 400;
+            opacity: 0;
+            transition: transform 0.3s, opacity 0.3s;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        /* Connection status */
+        .connection-status {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+
+        .connection-status.connected {
+            background: var(--success);
+            color: var(--bg-primary);
+        }
+
+        .connection-status.connecting {
+            background: var(--warning);
+            color: var(--bg-primary);
+        }
+
+        .connection-status.disconnected,
+        .connection-status.error {
+            background: var(--accent);
+        }
+
+        /* Player list item styling */
+        .player-gamepads {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-left: auto;
+        }
+
+        /* Hidden class */
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Start Overlay -->
+    <div id="startOverlay">
+        <div class="start-content">
+            <h1>Sunshine WebRTC</h1>
+            <p>Stream games to your browser with multiplayer support</p>
+
+            <div class="input-group">
+                <label for="playerName">Your Name</label>
+                <input type="text" id="playerName" placeholder="Player" maxlength="20">
+            </div>
+
+            <button class="btn btn-primary" id="createRoomBtn">Create Room</button>
+
+            <div class="divider"><span>or</span></div>
+
+            <div class="input-group">
+                <label for="joinCode">Room Code</label>
+                <input type="text" id="joinCode" class="room-code" placeholder="XXXXXX" maxlength="6">
+            </div>
+
+            <button class="btn btn-secondary" id="joinRoomBtn">Join Room</button>
+        </div>
+    </div>
+
+    <!-- Video Container -->
+    <div id="videoContainer" class="hidden">
+        <video id="videoElement" autoplay playsinline></video>
+    </div>
+
+    <!-- Toggle Sidebar Button -->
+    <button id="sidebarToggle" class="hidden" title="Toggle Settings">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+    </button>
+
+    <!-- Sidebar -->
+    <div id="sidebar" class="hidden">
+        <div class="sidebar-header">
+            <h2>Session</h2>
+            <span id="connectionStatus" class="connection-status">Disconnected</span>
+        </div>
+        <div class="sidebar-content">
+            <!-- Room Code Section -->
+            <div class="sidebar-section">
+                <h3>Room Code</h3>
+                <div class="room-code-display">
+                    <div class="code" id="roomCodeDisplay">------</div>
+                    <button class="btn btn-secondary copy-btn" id="copyCodeBtn">Copy Code</button>
+                </div>
+            </div>
+
+            <!-- Join as Player Section (for spectators) -->
+            <div class="sidebar-section" id="joinPlayerSection">
+                <div class="join-player-section">
+                    <p style="margin-bottom: 0.75rem; color: var(--text-secondary);">You are spectating</p>
+                    <button class="btn btn-success" id="joinAsPlayerBtn">Join as Player</button>
+                </div>
+            </div>
+
+            <!-- Players Section -->
+            <div class="sidebar-section">
+                <h3>Players</h3>
+                <div id="playerList">
+                    <!-- Players will be populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Host Controls (only visible to host) -->
+            <div class="sidebar-section" id="permissionsPanel" style="display: none;">
+                <h3>Guest Permissions</h3>
+                <div class="permission-item">
+                    <span>Allow Keyboard</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="allowKeyboard">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="permission-item">
+                    <span>Allow Mouse</span>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="allowMouse">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Stats Section -->
+            <div class="sidebar-section">
+                <h3>Statistics</h3>
+                <div class="stats-grid">
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsFps">--</div>
+                        <div class="stat-label">FPS</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsRtt">--</div>
+                        <div class="stat-label">Latency</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsBitrate">--</div>
+                        <div class="stat-label">Bitrate</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="statsPacketLoss">--</div>
+                        <div class="stat-label">Pkt Loss</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="sidebar-section">
+                <button class="btn btn-secondary" id="leaveBtn" style="width: 100%;">Leave Room</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gamepad Indicator -->
+    <div class="gamepad-indicator" id="gamepadIndicator" style="display: none;">
+        <span>Gamepads: </span><span id="gamepadCount">0/0</span>
+    </div>
+
+    <!-- Fullscreen Button -->
+    <button id="fullscreenBtn" class="hidden" title="Toggle Fullscreen">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+        </svg>
+    </button>
+
+    <script src="play.js"></script>
+</body>
+</html>

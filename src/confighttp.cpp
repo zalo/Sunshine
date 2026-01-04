@@ -417,6 +417,38 @@ namespace confighttp {
   }
 
   /**
+   * @brief Get the WebRTC play page.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void getPlayPage(resp_https_t response, req_https_t request) {
+    // Play page doesn't require auth - room code is the auth
+    print_req(request);
+
+    std::string content = file_handler::read_file(WEB_DIR "play.html");
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "text/html; charset=utf-8");
+    // Allow WebSocket connections in CSP
+    headers.emplace("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' wss: ws:;");
+    response->write(content, headers);
+  }
+
+  /**
+   * @brief Get the WebRTC play JavaScript file.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void getPlayJS(resp_https_t response, req_https_t request) {
+    print_req(request);
+
+    std::string content = file_handler::read_file(WEB_DIR "play.js");
+    SimpleWeb::CaseInsensitiveMultimap headers;
+    headers.emplace("Content-Type", "application/javascript; charset=utf-8");
+    headers.emplace("Cache-Control", "public, max-age=3600");
+    response->write(content, headers);
+  }
+
+  /**
    * @brief Get the favicon image.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1199,6 +1231,8 @@ namespace confighttp {
     server.resource["^/password/?$"]["GET"] = getPasswordPage;
     server.resource["^/welcome/?$"]["GET"] = getWelcomePage;
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;
+    server.resource["^/play/?$"]["GET"] = getPlayPage;
+    server.resource["^/play\\.js$"]["GET"] = getPlayJS;
     server.resource["^/api/pin$"]["POST"] = savePin;
     server.resource["^/api/apps$"]["GET"] = getApps;
     server.resource["^/api/logs$"]["GET"] = getLogs;

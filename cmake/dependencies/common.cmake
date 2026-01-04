@@ -74,6 +74,9 @@ endif()
 set(FFMPEG_INCLUDE_DIRS
         "${FFMPEG_PREPARED_BINARIES}/include")
 
+# libdatachannel for WebRTC support
+include("${CMAKE_MODULE_PATH}/dependencies/libdatachannel.cmake")
+
 # platform specific dependencies
 if(WIN32)
     include("${CMAKE_MODULE_PATH}/dependencies/windows.cmake")

@@ -212,6 +212,7 @@ namespace config {
       FORCE_VIDEO_HEADER_REPLACE,  ///< force replacing headers inside video data
       UPNP,  ///< Try Universal Plug 'n Play
       CONST_PIN,  ///< Use "universal" pin
+      WEBRTC_ENABLED,  ///< Enable WebRTC multiplayer streaming
       FLAG_SIZE  ///< Number of flags
     };
   }  // namespace flag
@@ -231,6 +232,16 @@ namespace config {
     std::string do_cmd;
     std::string undo_cmd;
     bool elevated;
+  };
+
+  struct webrtc_t {
+    int port_range_min;          ///< Minimum UDP port for WebRTC
+    int port_range_max;          ///< Maximum UDP port for WebRTC
+    std::string stun_server;     ///< STUN server URL
+    std::string turn_server;     ///< TURN server URL (optional)
+    std::string turn_username;   ///< TURN server username
+    std::string turn_password;   ///< TURN server password
+    int max_players;             ///< Maximum number of players (1-4)
   };
 
   struct sunshine_t {
@@ -259,6 +270,8 @@ namespace config {
     bool notify_pre_releases;
     bool system_tray;
     std::vector<prep_cmd_t> prep_cmds;
+
+    webrtc_t webrtc;  ///< WebRTC multiplayer streaming configuration
   };
 
   extern video_t video;

@@ -21,6 +21,7 @@
 #include "system_tray.h"
 #include "upnp.h"
 #include "video.h"
+#include "webrtc/webrtc.h"
 
 extern "C" {
 #include "rswrapper.h"
@@ -340,6 +341,13 @@ int main(int argc, char *argv[]) {
     BOOST_LOG(error) << "Video failed to find working encoder"sv;
   }
 
+#ifdef SUNSHINE_WEBRTC_ENABLED
+  // Initialize WebRTC after video encoders are probed
+  if (webrtc::init()) {
+    BOOST_LOG(error) << "WebRTC failed to initialize"sv;
+  }
+#endif
+
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
 
@@ -370,6 +378,11 @@ int main(int argc, char *argv[]) {
   std::thread configThread {confighttp::start};
   std::thread rtspThread {rtsp_stream::start};
 
+#ifdef SUNSHINE_WEBRTC_ENABLED
+  // Start WebRTC signaling and media forwarding
+  webrtc::start();
+#endif
+
 #ifdef _WIN32
   // If we're using the default port and GameStream is enabled, warn the user
   if (config::sunshine.port == 47989 && is_gamestream_enabled()) {
@@ -393,6 +406,11 @@ int main(int argc, char *argv[]) {
   }
 
   mainThreadLoop(shutdown_event);
+
+#ifdef SUNSHINE_WEBRTC_ENABLED
+  // Stop WebRTC before joining threads
+  webrtc::stop();
+#endif
 
   httpThread.join();
   configThread.join();

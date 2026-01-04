@@ -581,6 +581,15 @@ namespace config {
     false,  // notify_pre_releases
     true,  // system_tray
     {},  // prep commands
+    {  // webrtc
+      40000,  // port_range_min
+      40100,  // port_range_max
+      "stun:stun.l.google.com:19302",  // stun_server
+      {},  // turn_server
+      {},  // turn_username
+      {},  // turn_password
+      4,  // max_players
+    },
   };
 
   bool endline(char ch) {
@@ -1251,6 +1260,21 @@ namespace config {
     if (upnp) {
       config::sunshine.flags[config::flag::UPNP].flip();
     }
+
+    // WebRTC configuration
+    bool webrtc_enabled = false;
+    bool_f(vars, "webrtc_enabled"s, webrtc_enabled);
+    if (webrtc_enabled) {
+      config::sunshine.flags[config::flag::WEBRTC_ENABLED].flip();
+    }
+
+    int_f(vars, "webrtc_port_range_min"s, config::sunshine.webrtc.port_range_min);
+    int_f(vars, "webrtc_port_range_max"s, config::sunshine.webrtc.port_range_max);
+    string_f(vars, "webrtc_stun_server"s, config::sunshine.webrtc.stun_server);
+    string_f(vars, "webrtc_turn_server"s, config::sunshine.webrtc.turn_server);
+    string_f(vars, "webrtc_turn_username"s, config::sunshine.webrtc.turn_username);
+    string_f(vars, "webrtc_turn_password"s, config::sunshine.webrtc.turn_password);
+    int_between_f(vars, "webrtc_max_players"s, config::sunshine.webrtc.max_players, {1, 4});
 
     string_restricted_f(vars, "locale", config::sunshine.locale, {
                                                                    "bg"sv,  // Bulgarian
