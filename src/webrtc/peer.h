@@ -5,11 +5,13 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <rtc/rtc.hpp>
@@ -18,6 +20,15 @@ namespace webrtc {
 
   // Forward declarations
   class Room;
+
+  /**
+   * @brief Media packet for async sending queue.
+   */
+  struct MediaPacket {
+    bool is_video;              // true = video, false = audio
+    std::vector<std::byte> data;
+    uint32_t timestamp;
+  };
 
   /**
    * @brief Connection state for a peer.
@@ -243,6 +254,30 @@ namespace webrtc {
 
     void
     handle_data_channel(std::shared_ptr<rtc::DataChannel> channel);
+
+    // Async sender
+    void
+    start_sender();
+
+    void
+    stop_sender();
+
+    void
+    sender_loop();
+
+    bool
+    send_video_direct(const std::byte *data, size_t size, uint32_t timestamp);
+
+    bool
+    send_audio_direct(const std::byte *data, size_t size, uint32_t timestamp);
+
+    // Async sender state
+    std::atomic<bool> sender_running_{false};
+    std::thread sender_thread_;
+    std::mutex queue_mutex_;
+    std::condition_variable queue_cv_;
+    std::vector<MediaPacket> packet_queue_;
+    static constexpr size_t MAX_QUEUE_SIZE = 120;  // ~2 seconds at 60fps or ~1 second at 120fps
   };
 
   /**

@@ -81,6 +81,14 @@ namespace webrtc {
 
       BOOST_LOG(debug) << "Peer " << peer_id << " state changed to " << static_cast<int>(new_state);
 
+      // Start async sender when connected
+      if (new_state == PeerState::CONNECTED) {
+        self->start_sender();
+      }
+      else if (new_state == PeerState::DISCONNECTED || new_state == PeerState::FAILED) {
+        self->stop_sender();
+      }
+
       if (self->on_state_change_) {
         self->on_state_change_(new_state);
       }
@@ -304,11 +312,60 @@ namespace webrtc {
 
   bool
   Peer::send_video(const std::byte *data, size_t size, uint32_t timestamp) {
-    // Quick state check before acquiring lock
-    if (state_.load() != PeerState::CONNECTED) {
+    // Quick state check
+    if (state_.load() != PeerState::CONNECTED || !sender_running_.load()) {
       return false;
     }
 
+    // Enqueue the packet for async sending
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+
+      // If queue is full, drop oldest packets to make room (prioritize recent data)
+      while (packet_queue_.size() >= MAX_QUEUE_SIZE) {
+        packet_queue_.erase(packet_queue_.begin());
+      }
+
+      MediaPacket pkt;
+      pkt.is_video = true;
+      pkt.data.assign(data, data + size);
+      pkt.timestamp = timestamp;
+      packet_queue_.push_back(std::move(pkt));
+    }
+    queue_cv_.notify_one();
+
+    return true;
+  }
+
+  bool
+  Peer::send_audio(const std::byte *data, size_t size, uint32_t timestamp) {
+    // Quick state check
+    if (state_.load() != PeerState::CONNECTED || !sender_running_.load()) {
+      return false;
+    }
+
+    // Enqueue the packet for async sending
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+
+      // If queue is full, drop oldest packets to make room
+      while (packet_queue_.size() >= MAX_QUEUE_SIZE) {
+        packet_queue_.erase(packet_queue_.begin());
+      }
+
+      MediaPacket pkt;
+      pkt.is_video = false;
+      pkt.data.assign(data, data + size);
+      pkt.timestamp = timestamp;
+      packet_queue_.push_back(std::move(pkt));
+    }
+    queue_cv_.notify_one();
+
+    return true;
+  }
+
+  bool
+  Peer::send_video_direct(const std::byte *data, size_t size, uint32_t timestamp) {
     // Hold track mutex to prevent race with close()
     std::shared_ptr<rtc::Track> track;
     {
@@ -350,7 +407,7 @@ namespace webrtc {
   }
 
   bool
-  Peer::send_audio(const std::byte *data, size_t size, uint32_t timestamp) {
+  Peer::send_audio_direct(const std::byte *data, size_t size, uint32_t timestamp) {
     // Hold track mutex to prevent race with close()
     std::shared_ptr<rtc::Track> track;
     {
@@ -506,7 +563,10 @@ namespace webrtc {
 
     BOOST_LOG(debug) << "Peer " << id_ << " closing...";
 
-    // Close the peer connection FIRST to stop callbacks
+    // Stop the async sender first
+    stop_sender();
+
+    // Close the peer connection to stop callbacks
     if (pc_) {
       try {
         pc_->close();
@@ -561,6 +621,88 @@ namespace webrtc {
   Peer::get_stats() const {
     std::lock_guard<std::mutex> lock(stats_mutex_);
     return stats_;
+  }
+
+  void
+  Peer::start_sender() {
+    // Prevent double-start
+    bool expected = false;
+    if (!sender_running_.compare_exchange_strong(expected, true)) {
+      return;
+    }
+
+    BOOST_LOG(info) << "Peer " << id_ << " starting async sender";
+
+    sender_thread_ = std::thread(&Peer::sender_loop, this);
+  }
+
+  void
+  Peer::stop_sender() {
+    // Signal the sender to stop
+    bool expected = true;
+    if (!sender_running_.compare_exchange_strong(expected, false)) {
+      return;  // Already stopped
+    }
+
+    BOOST_LOG(debug) << "Peer " << id_ << " stopping async sender";
+
+    // Wake up the sender thread if it's waiting
+    queue_cv_.notify_all();
+
+    // Wait for the sender thread to finish
+    if (sender_thread_.joinable()) {
+      sender_thread_.join();
+    }
+
+    // Clear any remaining packets
+    {
+      std::lock_guard<std::mutex> lock(queue_mutex_);
+      packet_queue_.clear();
+    }
+
+    BOOST_LOG(debug) << "Peer " << id_ << " async sender stopped";
+  }
+
+  void
+  Peer::sender_loop() {
+    BOOST_LOG(debug) << "Peer " << id_ << " sender loop started";
+
+    while (sender_running_.load()) {
+      MediaPacket pkt;
+      bool got_packet = false;
+
+      // Wait for a packet or stop signal
+      {
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+
+        // Wait with timeout so we can check sender_running_ periodically
+        queue_cv_.wait_for(lock, std::chrono::milliseconds(50), [this] {
+          return !packet_queue_.empty() || !sender_running_.load();
+        });
+
+        if (!sender_running_.load()) {
+          break;
+        }
+
+        if (!packet_queue_.empty()) {
+          pkt = std::move(packet_queue_.front());
+          packet_queue_.erase(packet_queue_.begin());
+          got_packet = true;
+        }
+      }
+
+      // Send the packet outside of the lock
+      if (got_packet) {
+        if (pkt.is_video) {
+          send_video_direct(pkt.data.data(), pkt.data.size(), pkt.timestamp);
+        }
+        else {
+          send_audio_direct(pkt.data.data(), pkt.data.size(), pkt.timestamp);
+        }
+      }
+    }
+
+    BOOST_LOG(debug) << "Peer " << id_ << " sender loop ended";
   }
 
   // PeerManager implementation
