@@ -450,6 +450,12 @@ namespace webrtc {
     }
   }
 
+  void
+  RoomManager::register_peer(const std::string &peer_id, const std::string &room_code) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    peer_to_room_[peer_id] = room_code;
+  }
+
   std::shared_ptr<Room>
   RoomManager::find_room(const std::string &code) {
     std::lock_guard<std::mutex> lock(mutex_);

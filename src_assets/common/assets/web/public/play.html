@@ -654,7 +654,7 @@
 
     <!-- Video Container -->
     <div id="videoContainer" class="hidden">
-        <video id="videoElement" autoplay playsinline></video>
+        <video id="videoElement" autoplay playsinline muted></video>
     </div>
 
     <!-- Toggle Sidebar Button -->
@@ -672,15 +672,6 @@
             <span id="connectionStatus" class="connection-status">Disconnected</span>
         </div>
         <div class="sidebar-content">
-            <!-- Room Code Section -->
-            <div class="sidebar-section">
-                <h3>Room Code</h3>
-                <div class="room-code-display">
-                    <div class="code" id="roomCodeDisplay">------</div>
-                    <button class="btn btn-secondary copy-btn" id="copyCodeBtn">Copy Code</button>
-                </div>
-            </div>
-
             <!-- Join as Player Section (for spectators) -->
             <div class="sidebar-section" id="joinPlayerSection">
                 <div class="join-player-section">

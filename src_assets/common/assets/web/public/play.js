@@ -103,7 +103,9 @@ class SunshineWebRTC {
       gamepadIndicator: document.getElementById('gamepadIndicator'),
       fullscreenBtn: document.getElementById('fullscreenBtn'),
       leaveBtn: document.getElementById('leaveBtn'),
-      connectionStatus: document.getElementById('connectionStatus')
+      connectionStatus: document.getElementById('connectionStatus'),
+      allowKeyboard: document.getElementById('allowKeyboard'),
+      allowMouse: document.getElementById('allowMouse')
     };
 
     this.bindEvents();
@@ -134,6 +136,14 @@ class SunshineWebRTC {
     this.elements.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
     this.elements.leaveBtn?.addEventListener('click', () => this.leaveRoom());
 
+    // Permission toggle events (host only)
+    this.elements.allowKeyboard?.addEventListener('change', (e) => {
+      this.setGuestKeyboardPermission(e.target.checked);
+    });
+    this.elements.allowMouse?.addEventListener('change', (e) => {
+      this.setGuestMousePermission(e.target.checked);
+    });
+
     // Quality settings events
     this.elements.bitrateSlider?.addEventListener('input', (e) => {
       if (this.elements.bitrateValue) {
@@ -142,10 +152,15 @@ class SunshineWebRTC {
     });
     this.elements.applyQualityBtn?.addEventListener('click', () => this.applyQualitySettings());
 
-    // Video events - click to focus for keyboard input (no pointer lock)
+    // Video events - click to focus for keyboard input and unmute audio
     this.elements.videoElement?.addEventListener('click', () => {
       // Focus the video container to enable keyboard input
       this.elements.videoContainer?.focus();
+      // Unmute audio on user interaction (required by browser autoplay policies)
+      if (this.elements.videoElement.muted) {
+        this.elements.videoElement.muted = false;
+        console.log('Audio unmuted on user interaction');
+      }
     });
     // Make video container focusable
     if (this.elements.videoContainer) {
@@ -419,8 +434,15 @@ class SunshineWebRTC {
 
     this.pc.ontrack = (e) => {
       console.log('Track received:', e.track.kind);
-      if (e.track.kind === 'video') {
-        this.elements.videoElement.srcObject = e.streams[0];
+      if (e.track.kind === 'video' || e.track.kind === 'audio') {
+        // Add both video and audio tracks to the same media stream
+        if (!this.elements.videoElement.srcObject) {
+          this.elements.videoElement.srcObject = e.streams[0];
+        }
+        // Explicitly play to handle autoplay policies
+        this.elements.videoElement.play().catch(err => {
+          console.log('Media autoplay blocked, will play on user interaction:', err);
+        });
       }
     };
 
@@ -1195,6 +1217,36 @@ class SunshineWebRTC {
     this.showNotification('Applying quality settings...');
   }
 
+  setGuestKeyboardPermission(enabled) {
+    if (!this.isHost) return;
+
+    // Send permission update for all guest players
+    for (const player of this.players) {
+      if (player.peer_id !== this.playerId && player.slot > 0) {
+        this.sendSignaling('set_guest_keyboard', {
+          peer_id: player.peer_id,
+          enabled: enabled
+        });
+      }
+    }
+    this.showNotification(`Guest keyboard ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  setGuestMousePermission(enabled) {
+    if (!this.isHost) return;
+
+    // Send permission update for all guest players
+    for (const player of this.players) {
+      if (player.peer_id !== this.playerId && player.slot > 0) {
+        this.sendSignaling('set_guest_mouse', {
+          peer_id: player.peer_id,
+          enabled: enabled
+        });
+      }
+    }
+    this.showNotification(`Guest mouse ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
   handleQualityUpdated(msg) {
     // Server confirmed quality settings were applied
     if (msg.success) {
@@ -1287,7 +1339,11 @@ class SunshineWebRTC {
   }
 }
 
-// Initialize when DOM is ready
+// Initialize when DOM is ready and auto-join
 document.addEventListener('DOMContentLoaded', () => {
   window.sunshineWebRTC = new SunshineWebRTC();
+  // Auto-join after a short delay to ensure everything is initialized
+  setTimeout(() => {
+    window.sunshineWebRTC.autoJoin();
+  }, 100);
 });

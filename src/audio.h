@@ -101,4 +101,21 @@ namespace audio {
    * @examples_end
    */
   bool is_audio_ctx_sink_available(const audio_ctx_t &ctx);
+
+  /**
+   * @brief Start audio capture for WebRTC streaming.
+   * @return true if capture started successfully.
+   */
+  bool start_webrtc_audio_capture();
+
+  /**
+   * @brief Stop audio capture for WebRTC streaming.
+   */
+  void stop_webrtc_audio_capture();
+
+  /**
+   * @brief Check if WebRTC audio capture is active.
+   * @return true if capture is active.
+   */
+  bool is_webrtc_audio_capture_active();
 }  // namespace audio

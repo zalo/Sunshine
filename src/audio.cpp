@@ -323,4 +323,79 @@ namespace audio {
     stream.coupledStreams = params.coupledStreams;
     stream.mapping = params.mapping;
   }
+
+  // WebRTC audio capture state
+  static std::atomic<bool> webrtc_audio_capture_active{false};
+  static std::atomic<bool> webrtc_audio_capture_running{false};
+  static std::unique_ptr<std::thread> webrtc_audio_capture_thread;
+  static safe::mail_t webrtc_audio_mail;
+
+  void webrtc_audio_capture_loop() {
+    BOOST_LOG(info) << "WebRTC audio capture loop started";
+
+    // Set up stereo audio config
+    config_t config;
+    config.packetDuration = 10;  // 10ms packets for Opus
+    config.channels = 2;  // Stereo
+    config.mask = 0;
+    config.flags[config_t::HIGH_QUALITY] = true;
+    config.flags[config_t::HOST_AUDIO] = true;  // Keep audio on host
+    config.flags[config_t::CONTINUOUS_AUDIO] = false;
+
+    // Run the capture
+    capture(webrtc_audio_mail, config, nullptr);
+
+    BOOST_LOG(info) << "WebRTC audio capture loop ended";
+  }
+
+  bool start_webrtc_audio_capture() {
+    if (webrtc_audio_capture_active.load()) {
+      BOOST_LOG(debug) << "WebRTC audio capture already active";
+      return true;
+    }
+
+    if (!config::audio.stream) {
+      BOOST_LOG(info) << "Audio streaming disabled in config, skipping WebRTC audio";
+      return false;
+    }
+
+    BOOST_LOG(info) << "Starting WebRTC audio capture";
+
+    // Create mail for shutdown signaling
+    webrtc_audio_mail = std::make_shared<safe::mail_raw_t>();
+
+    webrtc_audio_capture_running.store(true);
+    webrtc_audio_capture_active.store(true);
+
+    webrtc_audio_capture_thread = std::make_unique<std::thread>(webrtc_audio_capture_loop);
+
+    return true;
+  }
+
+  void stop_webrtc_audio_capture() {
+    if (!webrtc_audio_capture_active.load()) {
+      return;
+    }
+
+    BOOST_LOG(info) << "Stopping WebRTC audio capture";
+
+    webrtc_audio_capture_running.store(false);
+
+    // Signal shutdown through the mail system
+    if (webrtc_audio_mail) {
+      webrtc_audio_mail->event<bool>(mail::shutdown)->raise(true);
+    }
+
+    if (webrtc_audio_capture_thread && webrtc_audio_capture_thread->joinable()) {
+      webrtc_audio_capture_thread->join();
+    }
+    webrtc_audio_capture_thread.reset();
+    webrtc_audio_mail.reset();
+    webrtc_audio_capture_active.store(false);
+  }
+
+  bool is_webrtc_audio_capture_active() {
+    return webrtc_audio_capture_active.load();
+  }
+
 }  // namespace audio

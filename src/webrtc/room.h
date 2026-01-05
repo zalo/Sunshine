@@ -267,6 +267,15 @@ namespace webrtc {
     add_room(std::shared_ptr<Room> room);
 
     /**
+     * @brief Register a peer with a room.
+     * Used when adding peers to existing rooms.
+     * @param peer_id The peer ID.
+     * @param room_code The room code.
+     */
+    void
+    register_peer(const std::string &peer_id, const std::string &room_code);
+
+    /**
      * @brief Find a room by code.
      * @param code The 6-character room code.
      * @return The room, or nullptr if not found.

@@ -15,9 +15,11 @@
 #include "webrtc.h"
 #include "ws_server.h"
 
+#include "src/audio.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/video.h"
+#include "audio_sender.h"
 
 using json = nlohmann::json;
 
@@ -165,9 +167,11 @@ namespace webrtc {
 
         RoomManager::instance().remove_room(room_code);
 
-        // Stop video capture if this was the last room
+        // Stop video/audio capture if this was the last room
         if (RoomManager::instance().room_count() == 0) {
-          BOOST_LOG(info) << "Last WebRTC room closed, stopping video capture";
+          BOOST_LOG(info) << "Last WebRTC room closed, stopping video/audio capture";
+          AudioSender::instance().stop();
+          audio::stop_webrtc_audio_capture();
           video::stop_webrtc_capture();
         }
       }
@@ -271,9 +275,16 @@ namespace webrtc {
 
     if (is_first_peer) {
       // First peer - start capture and become host
-      BOOST_LOG(info) << "First WebRTC peer joining, starting video capture";
+      BOOST_LOG(info) << "First WebRTC peer joining, starting video/audio capture";
       if (!video::start_webrtc_capture()) {
         BOOST_LOG(warning) << "Failed to start WebRTC video capture, video may not be available";
+      }
+      // Start audio capture and sender
+      if (audio::start_webrtc_audio_capture()) {
+        AudioSender::instance().init();
+        AudioSender::instance().start();
+      } else {
+        BOOST_LOG(warning) << "Failed to start WebRTC audio capture, audio may not be available";
       }
     }
     // Note: IDR frame request for non-first peers happens in on_state_change when CONNECTED
@@ -283,6 +294,8 @@ namespace webrtc {
     if (!peer) {
       send_error(peer_id, "Failed to create peer connection", "peer_error");
       if (is_first_peer) {
+        AudioSender::instance().stop();
+        audio::stop_webrtc_audio_capture();
         video::stop_webrtc_capture();
       }
       return;
@@ -306,6 +319,8 @@ namespace webrtc {
         send_error(peer_id, "Failed to join session", "join_error");
         return;
       }
+      // Register the peer with the room manager so find_room_by_peer works
+      RoomManager::instance().register_peer(peer_id, SINGLE_SESSION_CODE);
       is_host = false;
       player_slot = 0;
     }
@@ -327,13 +342,13 @@ namespace webrtc {
       send_to_peer(peer_id, msg.dump());
     });
 
-    peer->on_state_change([this, peer_id, is_first_peer](PeerState state) {
+    peer->on_state_change([this, peer_id](PeerState state) {
       if (state == PeerState::CONNECTED) {
-        // Request IDR frame when a non-first peer connects so they can start decoding
-        if (!is_first_peer) {
-          BOOST_LOG(info) << "Peer " << peer_id << " connected, requesting IDR frame";
-          video::request_webrtc_idr();
-        }
+        // Request IDR frame when ANY peer connects so they can start decoding
+        // For first peer: capture starts before connection is ready, so they miss initial IDR
+        // For subsequent peers: they need IDR to join ongoing stream
+        BOOST_LOG(info) << "Peer " << peer_id << " connected, requesting IDR frame";
+        video::request_webrtc_idr();
         json msg;
         msg["type"] = "stream_ready";
         send_to_peer(peer_id, msg.dump());
@@ -639,9 +654,11 @@ namespace webrtc {
 
       RoomManager::instance().remove_room(room_code);
 
-      // Stop video capture if this was the last room
+      // Stop video/audio capture if this was the last room
       if (RoomManager::instance().room_count() == 0) {
-        BOOST_LOG(info) << "Last WebRTC room closed, stopping video capture";
+        BOOST_LOG(info) << "Last WebRTC room closed, stopping video/audio capture";
+        AudioSender::instance().stop();
+        audio::stop_webrtc_audio_capture();
         video::stop_webrtc_capture();
       }
     }
