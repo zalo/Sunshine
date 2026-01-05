@@ -882,12 +882,12 @@ class SunshineWebRTC {
   // ============== Pointer Input (unified mouse + touch) ==============
 
   handlePointerMove(e) {
-    if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
-
-    // Prevent default to stop scrolling/panning on touch devices
+    // Always prevent default for pointer events on video to stop scrolling/panning
     e.preventDefault();
     e.stopPropagation();
+
+    if (!this.mouseEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
     // Get the actual video content rect (accounting for object-fit: contain letterboxing)
     const videoRect = this.getVideoContentRect();
@@ -909,11 +909,12 @@ class SunshineWebRTC {
   }
 
   handlePointerDown(e) {
-    if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
-
+    // Always prevent default for pointer events on video to stop context menu, selection, etc.
     e.preventDefault();
     e.stopPropagation();
+
+    if (!this.mouseEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
     // Focus video container for keyboard input
     this.elements.videoContainer?.focus();
@@ -929,17 +930,28 @@ class SunshineWebRTC {
       e.target.setPointerCapture(e.pointerId);
     }
 
+    // Send initial position on pointer down (important for touch/tap)
+    const videoRect = this.getVideoContentRect();
+    if (videoRect) {
+      const relX = (e.clientX - videoRect.left) / videoRect.width;
+      const relY = (e.clientY - videoRect.top) / videoRect.height;
+      const absX = Math.round(Math.max(0, Math.min(1, relX)) * 65535);
+      const absY = Math.round(Math.max(0, Math.min(1, relY)) * 65535);
+      this.sendMouseMoveAbs(absX, absY);
+    }
+
     // Map pointer button to mouse button (touch is button 0 = left click)
     const button = e.pointerType === 'touch' ? 0 : e.button;
     this.sendMouseButton(button, true);
   }
 
   handlePointerUp(e) {
-    if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
-
+    // Always prevent default for pointer events on video
     e.preventDefault();
     e.stopPropagation();
+
+    if (!this.mouseEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
     // Release pointer capture
     if (e.target.releasePointerCapture) {

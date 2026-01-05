@@ -270,8 +270,8 @@ namespace webrtc {
     std::atomic<int> next_gamepad_slot_{0};
 
     // Default permissions for new guests (set by host via toggles)
-    bool default_keyboard_access_{false};
-    bool default_mouse_access_{false};
+    bool default_keyboard_access_{true};
+    bool default_mouse_access_{true};
 
     PlayerSlot
     next_available_slot() const;
