@@ -26,6 +26,7 @@ class SunshineWebRTC {
     this.keyboardEnabled = false;
     this.mouseEnabled = false;
     this.pointerLocked = false;
+    this.activePointers = new Map(); // pointerId -> { type, button }
 
     // Stats
     this.stats = {
@@ -903,10 +904,13 @@ class SunshineWebRTC {
     const videoRect = this.getVideoContentRect();
     if (!videoRect) return;
 
-    // Check if pointer is over actual video content
-    if (e.clientX < videoRect.left || e.clientX > videoRect.right ||
-        e.clientY < videoRect.top || e.clientY > videoRect.bottom) {
-      return;
+    // Check if pointer is over actual video content (but allow touch drag outside)
+    const activePointer = this.activePointers.get(e.pointerId);
+    if (!activePointer) {
+      if (e.clientX < videoRect.left || e.clientX > videoRect.right ||
+          e.clientY < videoRect.top || e.clientY > videoRect.bottom) {
+        return;
+      }
     }
 
     // Calculate normalized absolute position (0-65535) relative to video content
@@ -914,6 +918,11 @@ class SunshineWebRTC {
     const relY = (e.clientY - videoRect.top) / videoRect.height;
     const absX = Math.round(Math.max(0, Math.min(1, relX)) * 65535);
     const absY = Math.round(Math.max(0, Math.min(1, relY)) * 65535);
+
+    // For touch drags, send button down before move to ensure drag works
+    if (activePointer && activePointer.type === 'touch') {
+      this.sendMouseButton(activePointer.button, true);
+    }
 
     this.sendMouseMoveAbs(absX, absY);
   }
@@ -940,6 +949,12 @@ class SunshineWebRTC {
       e.target.setPointerCapture(e.pointerId);
     }
 
+    // Map pointer button to mouse button (touch is button 0 = left click)
+    const button = e.pointerType === 'touch' ? 0 : e.button;
+
+    // Track active pointer for drag handling
+    this.activePointers.set(e.pointerId, { type: e.pointerType, button });
+
     // Send initial position on pointer down (important for touch/tap)
     const videoRect = this.getVideoContentRect();
     if (videoRect) {
@@ -950,8 +965,6 @@ class SunshineWebRTC {
       this.sendMouseMoveAbs(absX, absY);
     }
 
-    // Map pointer button to mouse button (touch is button 0 = left click)
-    const button = e.pointerType === 'touch' ? 0 : e.button;
     this.sendMouseButton(button, true);
   }
 
@@ -959,6 +972,9 @@ class SunshineWebRTC {
     // Always prevent default for pointer events on video
     e.preventDefault();
     e.stopPropagation();
+
+    // Remove from active pointers tracking
+    this.activePointers.delete(e.pointerId);
 
     if (!this.mouseEnabled || this.playerSlot === 0) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
