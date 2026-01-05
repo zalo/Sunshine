@@ -176,6 +176,30 @@ namespace webrtc {
     can_use_mouse(const std::string &peer_id) const;
 
     /**
+     * @brief Set default keyboard access for new guests.
+     */
+    void
+    set_default_keyboard_access(bool enabled);
+
+    /**
+     * @brief Set default mouse access for new guests.
+     */
+    void
+    set_default_mouse_access(bool enabled);
+
+    /**
+     * @brief Get default keyboard access setting.
+     */
+    bool
+    get_default_keyboard_access() const;
+
+    /**
+     * @brief Get default mouse access setting.
+     */
+    bool
+    get_default_mouse_access() const;
+
+    /**
      * @brief Get information about all players in the room.
      */
     std::vector<PlayerInfo>
@@ -236,6 +260,10 @@ namespace webrtc {
     // Maps peer_id -> (browser_gamepad_id -> server_slot)
     std::unordered_map<std::string, std::unordered_map<int, int>> peer_gamepad_mappings_;
     std::atomic<int> next_gamepad_slot_{0};
+
+    // Default permissions for new guests (set by host via toggles)
+    bool default_keyboard_access_{false};
+    bool default_mouse_access_{false};
 
     PlayerSlot
     next_available_slot() const;

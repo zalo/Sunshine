@@ -403,6 +403,9 @@ namespace webrtc {
       join_msg["player"]["is_spectator"] = true;
 
       broadcast_to_room(SINGLE_SESSION_CODE, join_msg.dump(), peer_id);
+
+      // Request IDR to help existing peers continue receiving video smoothly
+      video::request_webrtc_idr();
     }
 
     BOOST_LOG(info) << player_name << " joined WebRTC session as " << (is_host ? "host" : "guest");
@@ -687,10 +690,12 @@ namespace webrtc {
       return;
     }
 
-    // Send promotion response
+    // Send promotion response with current permission state
     json response;
     response["type"] = "promoted_to_player";
     response["player_slot"] = static_cast<int>(slot);
+    response["keyboard_enabled"] = room->get_default_keyboard_access();
+    response["mouse_enabled"] = room->get_default_mouse_access();
 
     send_to_peer(peer_id, response.dump());
 
@@ -701,7 +706,12 @@ namespace webrtc {
 
     broadcast_to_room(room->code(), update.dump());
 
-    BOOST_LOG(info) << "Peer " << peer_id << " promoted to player slot " << static_cast<int>(slot);
+    // Request IDR to help the promoted player continue receiving video smoothly
+    video::request_webrtc_idr();
+
+    BOOST_LOG(info) << "Peer " << peer_id << " promoted to player slot " << static_cast<int>(slot)
+                    << " (keyboard: " << room->get_default_keyboard_access()
+                    << ", mouse: " << room->get_default_mouse_access() << ")";
   }
 
   void
@@ -790,6 +800,9 @@ namespace webrtc {
       return;
     }
 
+    // Update default for future guests
+    room->set_default_keyboard_access(enabled);
+
     if (room->set_keyboard_access(target_peer_id, enabled)) {
       // Notify the target peer
       json msg;
@@ -819,6 +832,9 @@ namespace webrtc {
       send_error(peer_id, "Only host can modify permissions", "not_host");
       return;
     }
+
+    // Update default for future guests
+    room->set_default_mouse_access(enabled);
 
     if (room->set_mouse_access(target_peer_id, enabled)) {
       json msg;

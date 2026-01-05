@@ -142,9 +142,14 @@ namespace webrtc {
 
     it->second.slot = slot;
     it->second.is_spectator = false;
+    // Apply default permissions from host's toggle settings
+    it->second.can_use_keyboard = default_keyboard_access_;
+    it->second.can_use_mouse = default_mouse_access_;
 
     BOOST_LOG(info) << "Player " << it->second.name << " promoted to slot "
-                    << static_cast<int>(slot) << " in room " << code_;
+                    << static_cast<int>(slot) << " in room " << code_
+                    << " (keyboard: " << default_keyboard_access_
+                    << ", mouse: " << default_mouse_access_ << ")";
 
     return slot;
   }
@@ -326,6 +331,32 @@ namespace webrtc {
     }
 
     return it->second.can_use_mouse;
+  }
+
+  void
+  Room::set_default_keyboard_access(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    default_keyboard_access_ = enabled;
+    BOOST_LOG(info) << "Room " << code_ << " default keyboard access set to " << enabled;
+  }
+
+  void
+  Room::set_default_mouse_access(bool enabled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    default_mouse_access_ = enabled;
+    BOOST_LOG(info) << "Room " << code_ << " default mouse access set to " << enabled;
+  }
+
+  bool
+  Room::get_default_keyboard_access() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return default_keyboard_access_;
+  }
+
+  bool
+  Room::get_default_mouse_access() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return default_mouse_access_;
   }
 
   std::vector<PlayerInfo>

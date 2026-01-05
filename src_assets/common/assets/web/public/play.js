@@ -281,11 +281,20 @@ class SunshineWebRTC {
       case 'peer_joined':
         this.showNotification(`${msg.name} joined`);
         break;
+      case 'player_joined':
+        // A new player joined the room - update player list
+        if (msg.player) {
+          this.showNotification(`${msg.player.name} joined`);
+        }
+        break;
       case 'peer_left':
         this.showNotification(`${msg.name} left`);
         break;
       case 'quality_updated':
         this.handleQualityUpdated(msg);
+        break;
+      case 'permission_changed':
+        this.handlePermissionChanged(msg);
         break;
       default:
         console.warn('Unknown signaling message type:', msg.type);
@@ -377,8 +386,16 @@ class SunshineWebRTC {
   }
 
   handlePromotedToPlayer(msg) {
-    this.playerSlot = msg.slot;
-    this.showNotification(`You are now Player ${msg.slot}`);
+    this.playerSlot = msg.player_slot || msg.slot;
+    // Apply inherited permissions from host's toggle settings
+    if (msg.keyboard_enabled !== undefined) {
+      this.keyboardEnabled = msg.keyboard_enabled;
+    }
+    if (msg.mouse_enabled !== undefined) {
+      this.mouseEnabled = msg.mouse_enabled;
+    }
+    console.log('Promoted to player - keyboard:', this.keyboardEnabled, 'mouse:', this.mouseEnabled);
+    this.showNotification(`You are now Player ${this.playerSlot}`);
     this.updateRoomUI();
 
     // Enable gamepad polling when becoming a player
@@ -1245,6 +1262,20 @@ class SunshineWebRTC {
       }
     }
     this.showNotification(`Guest mouse ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  handlePermissionChanged(msg) {
+    // Server sent permission update for this peer
+    if (msg.keyboard_enabled !== undefined) {
+      this.keyboardEnabled = msg.keyboard_enabled;
+      console.log('Keyboard permission changed:', this.keyboardEnabled);
+      this.showNotification(`Keyboard input ${this.keyboardEnabled ? 'enabled' : 'disabled'}`);
+    }
+    if (msg.mouse_enabled !== undefined) {
+      this.mouseEnabled = msg.mouse_enabled;
+      console.log('Mouse permission changed:', this.mouseEnabled);
+      this.showNotification(`Mouse input ${this.mouseEnabled ? 'enabled' : 'disabled'}`);
+    }
   }
 
   handleQualityUpdated(msg) {
