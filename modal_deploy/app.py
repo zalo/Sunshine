@@ -26,7 +26,7 @@ app = modal.App("sunshine-webrtc")
 # Modal provides NVIDIA drivers on GPU instances, Sunshine will auto-detect NVENC
 # =============================================================================
 base_image = (
-    modal.Image.from_registry("ubuntu:24.04")
+    modal.Image.from_registry("nvidia/cuda:13.1.0-runtime-ubuntu24.04")
     .apt_install(
         # Python for Modal runtime and proxy
         "python3", "python3-pip", "python-is-python3",
