@@ -47,9 +47,9 @@ class SunshineWebRTC {
       idrRequested: false,
       reconnectAttempted: false
     };
-    this.FREEZE_THRESHOLD_MS = 1000;      // 1 second without new frames = frozen
-    this.IDR_RETRY_THRESHOLD_MS = 2000;   // 2 seconds = request another IDR
-    this.RECONNECT_THRESHOLD_MS = 4000;   // 4 seconds = attempt reconnect
+    this.FREEZE_THRESHOLD_MS = 500;       // 0.5 seconds without new frames = frozen
+    this.IDR_RETRY_THRESHOLD_MS = 1000;   // 1 second = request another IDR
+    this.RECONNECT_THRESHOLD_MS = 2000;   // 2 seconds = attempt reconnect
 
     // Pending messages queue (for SDP/ICE that arrive before peer connection is ready)
     this.pendingMessages = [];
@@ -163,17 +163,7 @@ class SunshineWebRTC {
     });
     this.elements.applyQualityBtn?.addEventListener('click', () => this.applyQualitySettings());
 
-    // Video events - click to focus for keyboard input and unmute audio
-    this.elements.videoElement?.addEventListener('click', () => {
-      // Focus the video container to enable keyboard input
-      this.elements.videoContainer?.focus();
-      // Unmute audio on user interaction (required by browser autoplay policies)
-      if (this.elements.videoElement.muted) {
-        this.elements.videoElement.muted = false;
-        console.log('Audio unmuted on user interaction');
-      }
-    });
-    // Make video container focusable
+    // Make video container focusable for keyboard input
     if (this.elements.videoContainer) {
       this.elements.videoContainer.tabIndex = 0;
     }
@@ -182,11 +172,25 @@ class SunshineWebRTC {
     document.addEventListener('keydown', (e) => this.handleKeyDown(e));
     document.addEventListener('keyup', (e) => this.handleKeyUp(e));
 
-    // Mouse events
-    document.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-    document.addEventListener('mousedown', (e) => this.handleMouseButton(e, true));
-    document.addEventListener('mouseup', (e) => this.handleMouseButton(e, false));
-    document.addEventListener('wheel', (e) => this.handleMouseWheel(e), { passive: false });
+    // Pointer events (unified mouse + touch support)
+    // Attach to video element directly for proper iOS/mobile handling
+    const videoEl = this.elements.videoElement;
+    if (videoEl) {
+      // Disable default touch actions on video element
+      videoEl.style.touchAction = 'none';
+
+      videoEl.addEventListener('pointermove', (e) => this.handlePointerMove(e), { passive: false });
+      videoEl.addEventListener('pointerdown', (e) => this.handlePointerDown(e), { passive: false });
+      videoEl.addEventListener('pointerup', (e) => this.handlePointerUp(e), { passive: false });
+      videoEl.addEventListener('pointercancel', (e) => this.handlePointerUp(e), { passive: false });
+      videoEl.addEventListener('wheel', (e) => this.handleMouseWheel(e), { passive: false });
+
+      // Prevent context menu on long press
+      videoEl.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    }
 
     // Pointer lock events
     document.addEventListener('pointerlockchange', () => this.handlePointerLockChange());
@@ -875,20 +879,21 @@ class SunshineWebRTC {
     return mapping[code] || 0;
   }
 
-  // ============== Mouse Input ==============
+  // ============== Pointer Input (unified mouse + touch) ==============
 
-  handleMouseMove(e) {
+  handlePointerMove(e) {
     if (!this.mouseEnabled || this.playerSlot === 0) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
-    // Only handle mouse over the video element
-    if (!this.elements.videoElement) return;
+    // Prevent default to stop scrolling/panning on touch devices
+    e.preventDefault();
+    e.stopPropagation();
 
     // Get the actual video content rect (accounting for object-fit: contain letterboxing)
     const videoRect = this.getVideoContentRect();
     if (!videoRect) return;
 
-    // Check if mouse is over actual video content
+    // Check if pointer is over actual video content
     if (e.clientX < videoRect.left || e.clientX > videoRect.right ||
         e.clientY < videoRect.top || e.clientY > videoRect.bottom) {
       return;
@@ -901,6 +906,53 @@ class SunshineWebRTC {
     const absY = Math.round(Math.max(0, Math.min(1, relY)) * 65535);
 
     this.sendMouseMoveAbs(absX, absY);
+  }
+
+  handlePointerDown(e) {
+    if (!this.mouseEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Focus video container for keyboard input
+    this.elements.videoContainer?.focus();
+
+    // Unmute audio on user interaction
+    if (this.elements.videoElement?.muted) {
+      this.elements.videoElement.muted = false;
+      console.log('Audio unmuted on user interaction');
+    }
+
+    // Capture the pointer for reliable tracking during drag
+    if (e.target.setPointerCapture) {
+      e.target.setPointerCapture(e.pointerId);
+    }
+
+    // Map pointer button to mouse button (touch is button 0 = left click)
+    const button = e.pointerType === 'touch' ? 0 : e.button;
+    this.sendMouseButton(button, true);
+  }
+
+  handlePointerUp(e) {
+    if (!this.mouseEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Release pointer capture
+    if (e.target.releasePointerCapture) {
+      try {
+        e.target.releasePointerCapture(e.pointerId);
+      } catch (err) {
+        // Ignore - pointer may not be captured
+      }
+    }
+
+    // Map pointer button to mouse button (touch is button 0 = left click)
+    const button = e.pointerType === 'touch' ? 0 : e.button;
+    this.sendMouseButton(button, false);
   }
 
   getVideoContentRect() {
@@ -939,25 +991,13 @@ class SunshineWebRTC {
     };
   }
 
-  handleMouseButton(e, pressed) {
-    if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
-
-    // Only handle clicks on the video element
-    if (e.target !== this.elements.videoElement) return;
-
-    e.preventDefault();
-    this.sendMouseButton(e.button, pressed);
-  }
-
   handleMouseWheel(e) {
     if (!this.mouseEnabled || this.playerSlot === 0) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
-    // Only handle scroll over the video element
-    if (e.target !== this.elements.videoElement) return;
-
     e.preventDefault();
+    e.stopPropagation();
+
     // Negate deltaY to fix scroll direction (browser deltaY is inverted)
     this.sendMouseScroll(e.deltaX, -e.deltaY);
   }
