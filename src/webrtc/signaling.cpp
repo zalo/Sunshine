@@ -15,6 +15,7 @@
 
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/video.h"
 
 using json = nlohmann::json;
 
@@ -132,12 +133,25 @@ namespace webrtc {
   SignalingServer::on_close(const std::string &peer_id) {
     BOOST_LOG(info) << "WebRTC client disconnected: " << peer_id;
 
-    // Find and handle room cleanup
+    // IMPORTANT: Remove peer from PeerManager FIRST to stop video transmission
+    // This prevents race conditions where VideoSender is still sending to a disconnecting peer
+    BOOST_LOG(debug) << "on_close: closing peer connection FIRST for " << peer_id;
+    PeerManager::instance().remove_peer(peer_id);
+    BOOST_LOG(debug) << "on_close: peer removed from manager for " << peer_id;
+
+    // Now handle room cleanup (peer connection is already closed, safe from races)
     auto room = RoomManager::instance().find_room_by_peer(peer_id);
     if (room) {
+      // Get player info BEFORE removing
+      auto player = room->get_player(peer_id);
+      std::string room_code = room->code();
+
+      BOOST_LOG(debug) << "Removing peer " << peer_id << " from room " << room_code;
+
       bool host_left = room->remove_peer(peer_id);
 
       if (host_left) {
+        BOOST_LOG(info) << "Host left room " << room_code << ", closing room";
         // Notify all remaining peers that room is closing
         json msg;
         msg["type"] = "room_closed";
@@ -147,39 +161,43 @@ namespace webrtc {
           send_to_peer(peer->id(), msg.dump());
         }
 
-        RoomManager::instance().remove_room(room->code());
-      }
-      else {
-        // Notify remaining peers about player leaving
-        auto player = room->get_player(peer_id);
-        if (player) {
-          json msg;
-          msg["type"] = "player_left";
-          msg["peer_id"] = peer_id;
-          msg["slot"] = static_cast<int>(player->slot);
+        RoomManager::instance().remove_room(room_code);
 
-          broadcast_to_room(room->code(), msg.dump(), peer_id);
-
-          // Send updated player list
-          json update;
-          update["type"] = "room_updated";
-          update["players"] = json::parse(build_players_json(room->code()));
-
-          broadcast_to_room(room->code(), update.dump());
+        // Stop video capture if this was the last room
+        if (RoomManager::instance().room_count() == 0) {
+          BOOST_LOG(info) << "Last WebRTC room closed, stopping video capture";
+          video::stop_webrtc_capture();
         }
       }
-    }
+      else if (player) {
+        BOOST_LOG(info) << "Non-host peer " << peer_id << " (slot " << static_cast<int>(player->slot) << ") left room " << room_code;
+        // Notify remaining peers about player leaving
+        json msg;
+        msg["type"] = "player_left";
+        msg["peer_id"] = peer_id;
+        msg["slot"] = static_cast<int>(player->slot);
 
-    // Clean up peer
-    PeerManager::instance().remove_peer(peer_id);
+        broadcast_to_room(room_code, msg.dump(), peer_id);
+
+        // Send updated player list
+        json update;
+        update["type"] = "room_updated";
+        update["players"] = json::parse(build_players_json(room_code));
+
+        broadcast_to_room(room_code, update.dump());
+      }
+    }
 
     // Remove from connection maps
-    std::lock_guard<std::mutex> lock(connections_mutex_);
-    auto ws_it = peer_to_ws_.find(peer_id);
-    if (ws_it != peer_to_ws_.end()) {
-      ws_to_peer_.erase(ws_it->second);
-      peer_to_ws_.erase(ws_it);
+    {
+      std::lock_guard<std::mutex> lock(connections_mutex_);
+      auto ws_it = peer_to_ws_.find(peer_id);
+      if (ws_it != peer_to_ws_.end()) {
+        ws_to_peer_.erase(ws_it->second);
+        peer_to_ws_.erase(ws_it);
+      }
     }
+    BOOST_LOG(debug) << "on_close: cleanup complete for " << peer_id;
   }
 
   void
@@ -232,10 +250,23 @@ namespace webrtc {
 
   void
   SignalingServer::handle_create_room(const std::string &peer_id, const std::string &player_name) {
+    // Start video capture if this is the first room
+    bool first_room = (RoomManager::instance().room_count() == 0);
+    if (first_room) {
+      BOOST_LOG(info) << "First WebRTC room being created, starting video capture";
+      if (!video::start_webrtc_capture()) {
+        BOOST_LOG(warning) << "Failed to start WebRTC video capture, video may not be available";
+      }
+    }
+
     // Create peer connection
     auto peer = PeerManager::instance().create_peer(peer_id);
     if (!peer) {
       send_error(peer_id, "Failed to create peer connection", "peer_error");
+      // Stop capture if we just started it and failed
+      if (first_room) {
+        video::stop_webrtc_capture();
+      }
       return;
     }
 
@@ -244,6 +275,10 @@ namespace webrtc {
     if (!room) {
       PeerManager::instance().remove_peer(peer_id);
       send_error(peer_id, "Failed to create room", "room_error");
+      // Stop capture if we just started it and failed
+      if (first_room) {
+        video::stop_webrtc_capture();
+      }
       return;
     }
 
@@ -405,7 +440,15 @@ namespace webrtc {
       return;
     }
 
+    // Get info needed before cleanup
     std::string room_code = room->code();
+    auto player = room->get_player(peer_id);
+
+    // Close peer connection FIRST to stop video transmission
+    // This is important to prevent race conditions with VideoSender
+    PeerManager::instance().remove_peer(peer_id);
+
+    // Now remove from room (peer connection already closed)
     bool host_left = room->remove_peer(peer_id);
 
     if (host_left) {
@@ -420,19 +463,18 @@ namespace webrtc {
 
       RoomManager::instance().remove_room(room_code);
     }
-    else {
+    else if (player) {
       // Notify others
-      auto player = room->get_player(peer_id);
-      if (player) {
-        json msg;
-        msg["type"] = "player_left";
-        msg["peer_id"] = peer_id;
-        msg["slot"] = static_cast<int>(player->slot);
+      json msg;
+      msg["type"] = "player_left";
+      msg["peer_id"] = peer_id;
+      msg["slot"] = static_cast<int>(player->slot);
 
-        broadcast_to_room(room_code, msg.dump(), peer_id);
-      }
+      broadcast_to_room(room_code, msg.dump(), peer_id);
     }
 
+    // Send confirmation to the leaving peer
+    // Note: This may fail if peer already disconnected, but that's OK
     json response;
     response["type"] = "left_room";
     send_to_peer(peer_id, response.dump());

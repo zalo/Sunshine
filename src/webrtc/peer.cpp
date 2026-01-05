@@ -8,6 +8,7 @@
 #include <random>
 
 #include "src/logging.h"
+#include "video_sender.h"
 
 namespace webrtc {
 
@@ -35,6 +36,9 @@ namespace webrtc {
 
   Peer::~Peer() {
     close();
+    // Explicitly reset pc_ to ensure all callbacks complete before member destruction
+    // This prevents use-after-free from libdatachannel callbacks during destruction
+    pc_.reset();
     BOOST_LOG(info) << "WebRTC peer " << id_ << " destroyed";
   }
 
@@ -223,22 +227,30 @@ namespace webrtc {
         video.addH264Codec(payload_type);
       }
 
-      video.addSSRC(ssrc_, "video-stream");
+      // Use VideoSender's SSRC so RTP packets match what's negotiated in SDP
+      uint32_t video_ssrc = VideoSender::instance().video_ssrc();
+      video.addSSRC(video_ssrc, "video-stream");
 
-      video_track_ = pc_->addTrack(video);
+      auto track = pc_->addTrack(video);
 
       // Copy id for safe callbacks
       std::string peer_id = id_;
 
-      video_track_->onOpen([peer_id]() {
+      track->onOpen([peer_id]() {
         BOOST_LOG(info) << "Peer " << peer_id << " video track opened";
       });
 
-      video_track_->onClosed([peer_id]() {
+      track->onClosed([peer_id]() {
         BOOST_LOG(info) << "Peer " << peer_id << " video track closed";
       });
 
-      BOOST_LOG(info) << "Peer " << id_ << " added video track (" << codec << ")";
+      // Store track with mutex protection
+      {
+        std::lock_guard<std::mutex> lock(track_mutex_);
+        video_track_ = track;
+      }
+
+      BOOST_LOG(info) << "Peer " << id_ << " added video track (" << codec << ", SSRC: " << video_ssrc << ")";
       return true;
     }
     catch (const std::exception &e) {
@@ -262,18 +274,24 @@ namespace webrtc {
 
       audio.addSSRC(ssrc_ + 1, "audio-stream");
 
-      audio_track_ = pc_->addTrack(audio);
+      auto track = pc_->addTrack(audio);
 
       // Copy id for safe callbacks
       std::string peer_id = id_;
 
-      audio_track_->onOpen([peer_id]() {
+      track->onOpen([peer_id]() {
         BOOST_LOG(info) << "Peer " << peer_id << " audio track opened";
       });
 
-      audio_track_->onClosed([peer_id]() {
+      track->onClosed([peer_id]() {
         BOOST_LOG(info) << "Peer " << peer_id << " audio track closed";
       });
+
+      // Store track with mutex protection
+      {
+        std::lock_guard<std::mutex> lock(track_mutex_);
+        audio_track_ = track;
+      }
 
       BOOST_LOG(info) << "Peer " << id_ << " added audio track (Opus)";
       return true;
@@ -286,19 +304,44 @@ namespace webrtc {
 
   bool
   Peer::send_video(const std::byte *data, size_t size, uint32_t timestamp) {
-    if (!video_track_ || !video_track_->isOpen()) {
+    // Quick state check before acquiring lock
+    if (state_.load() != PeerState::CONNECTED) {
+      return false;
+    }
+
+    // Hold track mutex to prevent race with close()
+    std::shared_ptr<rtc::Track> track;
+    {
+      std::lock_guard<std::mutex> lock(track_mutex_);
+      track = video_track_;
+    }
+
+    if (!track) {
+      return false;
+    }
+
+    if (!track->isOpen()) {
+      static uint64_t not_open_count = 0;
+      if (not_open_count++ % 60 == 0) {
+        BOOST_LOG(debug) << "Peer " << id_ << " video track not open (count: " << not_open_count << ")";
+      }
       return false;
     }
 
     try {
-      video_track_->send(data, size);
+      bool sent = track->send(data, size);
 
       // Update stats
       std::lock_guard<std::mutex> lock(stats_mutex_);
       stats_.bytes_sent_video += size;
       stats_.packets_sent_video++;
 
-      return true;
+      if (stats_.packets_sent_video % 60 == 1) {
+        BOOST_LOG(debug) << "Peer " << id_ << " sent video packet " << stats_.packets_sent_video
+                         << " (" << size << " bytes, result: " << sent << ")";
+      }
+
+      return sent;
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Peer " << id_ << " failed to send video: " << e.what();
@@ -308,12 +351,19 @@ namespace webrtc {
 
   bool
   Peer::send_audio(const std::byte *data, size_t size, uint32_t timestamp) {
-    if (!audio_track_ || !audio_track_->isOpen()) {
+    // Hold track mutex to prevent race with close()
+    std::shared_ptr<rtc::Track> track;
+    {
+      std::lock_guard<std::mutex> lock(track_mutex_);
+      track = audio_track_;
+    }
+
+    if (!track || !track->isOpen()) {
       return false;
     }
 
     try {
-      audio_track_->send(data, size);
+      track->send(data, size);
 
       // Update stats
       std::lock_guard<std::mutex> lock(stats_mutex_);
@@ -433,19 +483,42 @@ namespace webrtc {
 
   void
   Peer::close() {
-    if (pc_) {
-      pc_->close();
+    // Prevent double-close
+    PeerState expected = PeerState::CONNECTED;
+    if (!state_.compare_exchange_strong(expected, PeerState::DISCONNECTED)) {
+      expected = PeerState::CONNECTING;
+      if (!state_.compare_exchange_strong(expected, PeerState::DISCONNECTED)) {
+        BOOST_LOG(debug) << "Peer " << id_ << " already closed or closing";
+        return;
+      }
     }
 
+    BOOST_LOG(debug) << "Peer " << id_ << " closing...";
+
+    // Close the peer connection FIRST to stop callbacks
+    if (pc_) {
+      try {
+        pc_->close();
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "Peer " << id_ << " error closing peer connection: " << e.what();
+      }
+    }
+
+    // Then clear the tracks
+    {
+      std::lock_guard<std::mutex> lock(track_mutex_);
+      video_track_.reset();
+      audio_track_.reset();
+    }
+
+    // Clear data channels
     {
       std::lock_guard<std::mutex> lock(channels_mutex_);
       data_channels_.clear();
     }
 
-    video_track_.reset();
-    audio_track_.reset();
-
-    state_.store(PeerState::DISCONNECTED);
+    BOOST_LOG(debug) << "Peer " << id_ << " closed";
   }
 
   void
@@ -523,13 +596,25 @@ namespace webrtc {
 
   void
   PeerManager::remove_peer(const std::string &id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // Extract peer from map while holding lock, then close outside lock
+    // This prevents crashes from callbacks firing during destruction
+    std::shared_ptr<Peer> peer;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
 
-    auto it = peers_.find(id);
-    if (it != peers_.end()) {
-      it->second->close();
-      peers_.erase(it);
-      BOOST_LOG(info) << "Peer " << id << " removed from manager";
+      auto it = peers_.find(id);
+      if (it != peers_.end()) {
+        peer = std::move(it->second);  // Move ownership out
+        peers_.erase(it);
+      }
+    }
+
+    // Close the peer outside the lock to prevent deadlock and
+    // allow the peer to fully clean up before destruction
+    if (peer) {
+      peer->close();
+      BOOST_LOG(info) << "Peer " << id << " removed and closed";
+      // peer goes out of scope here, destructor runs without lock held
     }
   }
 

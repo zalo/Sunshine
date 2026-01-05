@@ -215,7 +215,8 @@ namespace webrtc {
 
     std::unique_ptr<rtc::PeerConnection> pc_;
 
-    // Media tracks
+    // Media tracks (protected by track_mutex_)
+    mutable std::mutex track_mutex_;
     std::shared_ptr<rtc::Track> video_track_;
     std::shared_ptr<rtc::Track> audio_track_;
 
