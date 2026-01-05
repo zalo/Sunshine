@@ -181,8 +181,8 @@ namespace webrtc {
     std::thread sender_thread_;
 
     VideoCodec codec_{VideoCodec::H264};
-    int framerate_{60};  // Default to 60 FPS
-    uint32_t timestamp_increment_{1500};  // 90000 Hz / framerate (1500 for 60 FPS)
+    int framerate_{144};  // Default to 144 FPS (must match video::webrtc_config_t default)
+    uint32_t timestamp_increment_{625};  // 90000 Hz / framerate (625 for 144 FPS)
     VideoParams params_;
 
     // RTP state

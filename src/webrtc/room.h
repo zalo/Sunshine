@@ -220,6 +220,14 @@ namespace webrtc {
     get_peers() const;
 
     /**
+     * @brief Update the peer connection for a player (used for reconnect).
+     * @param peer_id The peer ID.
+     * @param new_peer The new peer connection.
+     */
+    void
+    update_peer(const std::string &peer_id, std::shared_ptr<Peer> new_peer);
+
+    /**
      * @brief Get the peer count (including spectators).
      */
     size_t

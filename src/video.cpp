@@ -2948,6 +2948,10 @@ namespace video {
     safe::mail_raw_t::event_t<bool> webrtc_idr_events;  // Stored for requesting IDR frames
     std::mutex webrtc_idr_mutex;
 
+    // Global WebRTC config (protected by mutex)
+    webrtc_config_t g_webrtc_config;
+    std::mutex g_webrtc_config_mutex;
+
     void webrtc_capture_loop() {
       BOOST_LOG(info) << "WebRTC capture loop started";
 
@@ -2959,12 +2963,18 @@ namespace video {
         return;
       }
 
-      // Create a minimal config for WebRTC capture
+      // Create a minimal config for WebRTC capture using global settings
+      webrtc_config_t webrtc_cfg;
+      {
+        std::lock_guard<std::mutex> lock(g_webrtc_config_mutex);
+        webrtc_cfg = g_webrtc_config;
+      }
+
       config_t config;
-      config.width = 1920;
-      config.height = 1080;
-      config.framerate = 60;
-      config.bitrate = 5000;  // 5 Mbps
+      config.width = webrtc_cfg.width;
+      config.height = webrtc_cfg.height;
+      config.framerate = webrtc_cfg.framerate;
+      config.bitrate = webrtc_cfg.bitrate;
       config.slicesPerFrame = 1;
       config.numRefFrames = 1;
       config.encoderCscMode = 1;  // Full range, BT.601
@@ -3039,8 +3049,13 @@ namespace video {
     webrtc_capture_active.store(true);
 
     // Configure and start video sender BEFORE capture thread so it's ready to receive packets
-    // Set framerate to match the capture config (60 FPS for WebRTC)
-    webrtc::VideoSender::instance().set_framerate(60);
+    // Set framerate to match the capture config
+    int framerate;
+    {
+      std::lock_guard<std::mutex> lock(g_webrtc_config_mutex);
+      framerate = g_webrtc_config.framerate;
+    }
+    webrtc::VideoSender::instance().set_framerate(framerate);
     webrtc::VideoSender::instance().start();
 
     webrtc_capture_thread = std::make_unique<std::thread>(webrtc_capture_loop);
@@ -3076,6 +3091,38 @@ namespace video {
     if (webrtc_idr_events) {
       BOOST_LOG(info) << "Requesting IDR frame for WebRTC";
       webrtc_idr_events->raise(true);
+    }
+  }
+
+  webrtc_config_t get_webrtc_config() {
+    std::lock_guard<std::mutex> lock(g_webrtc_config_mutex);
+    return g_webrtc_config;
+  }
+
+  void set_webrtc_config(const webrtc_config_t &config) {
+    bool needs_restart = false;
+    {
+      std::lock_guard<std::mutex> lock(g_webrtc_config_mutex);
+      // Check if resolution or framerate changed (requires restart)
+      if (g_webrtc_config.width != config.width ||
+          g_webrtc_config.height != config.height ||
+          g_webrtc_config.framerate != config.framerate) {
+        needs_restart = webrtc_capture_active.load();
+      }
+      g_webrtc_config = config;
+    }
+
+    // Update video sender framerate immediately
+    webrtc::VideoSender::instance().set_framerate(config.framerate);
+
+    BOOST_LOG(info) << "WebRTC config updated: " << config.width << "x" << config.height
+                    << " @ " << config.framerate << "fps, " << config.bitrate << "kbps";
+
+    // If resolution/framerate changed during active capture, we need to restart
+    if (needs_restart) {
+      BOOST_LOG(info) << "Restarting WebRTC capture for resolution/framerate change";
+      stop_webrtc_capture();
+      start_webrtc_capture();
     }
   }
 

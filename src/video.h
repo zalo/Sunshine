@@ -366,6 +366,27 @@ namespace video {
    */
   void request_webrtc_idr();
 
+  /**
+   * @brief WebRTC video configuration.
+   */
+  struct webrtc_config_t {
+    int width = 853;
+    int height = 480;
+    int framerate = 144;
+    int bitrate = 3000;  // kbps
+  };
+
+  /**
+   * @brief Get the current WebRTC video configuration.
+   */
+  webrtc_config_t get_webrtc_config();
+
+  /**
+   * @brief Set the WebRTC video configuration.
+   * If capture is active, it will be restarted with the new settings.
+   */
+  void set_webrtc_config(const webrtc_config_t &config);
+
   bool validate_encoder(encoder_t &encoder, bool expect_failure);
 
   /**

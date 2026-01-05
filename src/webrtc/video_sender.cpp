@@ -69,7 +69,7 @@ namespace webrtc {
   void
   VideoSender::set_framerate(int fps) {
     if (fps <= 0) {
-      fps = 60;  // Default to 60 FPS
+      fps = 144;  // Default to 144 FPS (must match video::webrtc_config_t default)
     }
     framerate_ = fps;
     // RTP video uses 90kHz clock

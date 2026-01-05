@@ -399,6 +399,17 @@ namespace webrtc {
     return result;
   }
 
+  void
+  Room::update_peer(const std::string &peer_id, std::shared_ptr<Peer> new_peer) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = peers_.find(peer_id);
+    if (it != peers_.end()) {
+      it->second = new_peer;
+      BOOST_LOG(info) << "Updated peer connection for " << peer_id << " in room " << code_;
+    }
+  }
+
   size_t
   Room::peer_count() const {
     std::lock_guard<std::mutex> lock(mutex_);

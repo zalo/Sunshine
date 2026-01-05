@@ -40,6 +40,17 @@ class SunshineWebRTC {
     };
     this.statsIntervalId = null;
 
+    // Freeze detection
+    this.freezeDetection = {
+      lastFrameCount: 0,
+      freezeStartTime: null,
+      idrRequested: false,
+      reconnectAttempted: false
+    };
+    this.FREEZE_THRESHOLD_MS = 1000;      // 1 second without new frames = frozen
+    this.IDR_RETRY_THRESHOLD_MS = 2000;   // 2 seconds = request another IDR
+    this.RECONNECT_THRESHOLD_MS = 4000;   // 4 seconds = attempt reconnect
+
     // Pending messages queue (for SDP/ICE that arrive before peer connection is ready)
     this.pendingMessages = [];
 
@@ -275,6 +286,9 @@ class SunshineWebRTC {
       case 'ice':
         this.handleRemoteICE(msg);
         break;
+      case 'reconnected':
+        this.handleReconnected(msg);
+        break;
       case 'error':
         this.handleSignalingError(msg);
         break;
@@ -351,6 +365,12 @@ class SunshineWebRTC {
 
     this.showStreamUI();
     this.updateRoomUI();
+
+    // Update quality settings UI from server's current config
+    if (msg.video_settings) {
+      console.log('Received video settings:', msg.video_settings);
+      this.updateQualityUI(msg.video_settings);
+    }
   }
 
   handleRoomJoined(msg) {
@@ -372,6 +392,12 @@ class SunshineWebRTC {
 
     this.showStreamUI();
     this.updateRoomUI();
+
+    // Update quality settings UI from server's current config (for display, guests can't change)
+    if (msg.video_settings) {
+      console.log('Received video settings:', msg.video_settings);
+      this.updateQualityUI(msg.video_settings);
+    }
   }
 
   handleRoomUpdated(msg) {
@@ -400,6 +426,22 @@ class SunshineWebRTC {
 
     // Enable gamepad polling when becoming a player
     this.startGamepadPolling();
+  }
+
+  handleReconnected(msg) {
+    console.log('Reconnected:', msg);
+
+    // Restore state from server
+    this.playerSlot = msg.player_slot || 0;
+    this.isHost = msg.is_host || false;
+    this.keyboardEnabled = msg.keyboard_enabled ?? false;
+    this.mouseEnabled = msg.mouse_enabled ?? false;
+
+    // Initialize new peer connection
+    this.initPeerConnection();
+
+    this.showNotification('Reconnected to stream');
+    this.updateRoomUI();
   }
 
   leaveRoom() {
@@ -841,21 +883,60 @@ class SunshineWebRTC {
 
     // Only handle mouse over the video element
     if (!this.elements.videoElement) return;
-    const rect = this.elements.videoElement.getBoundingClientRect();
 
-    // Check if mouse is over video
-    if (e.clientX < rect.left || e.clientX > rect.right ||
-        e.clientY < rect.top || e.clientY > rect.bottom) {
+    // Get the actual video content rect (accounting for object-fit: contain letterboxing)
+    const videoRect = this.getVideoContentRect();
+    if (!videoRect) return;
+
+    // Check if mouse is over actual video content
+    if (e.clientX < videoRect.left || e.clientX > videoRect.right ||
+        e.clientY < videoRect.top || e.clientY > videoRect.bottom) {
       return;
     }
 
-    // Calculate normalized absolute position (0-65535)
-    const relX = (e.clientX - rect.left) / rect.width;
-    const relY = (e.clientY - rect.top) / rect.height;
-    const absX = Math.round(relX * 65535);
-    const absY = Math.round(relY * 65535);
+    // Calculate normalized absolute position (0-65535) relative to video content
+    const relX = (e.clientX - videoRect.left) / videoRect.width;
+    const relY = (e.clientY - videoRect.top) / videoRect.height;
+    const absX = Math.round(Math.max(0, Math.min(1, relX)) * 65535);
+    const absY = Math.round(Math.max(0, Math.min(1, relY)) * 65535);
 
     this.sendMouseMoveAbs(absX, absY);
+  }
+
+  getVideoContentRect() {
+    // Calculate the actual video content rectangle within the element
+    // accounting for object-fit: contain letterboxing
+    const video = this.elements.videoElement;
+    if (!video || !video.videoWidth || !video.videoHeight) return null;
+
+    const elementRect = video.getBoundingClientRect();
+    const videoAspect = video.videoWidth / video.videoHeight;
+    const elementAspect = elementRect.width / elementRect.height;
+
+    let contentWidth, contentHeight, contentLeft, contentTop;
+
+    if (videoAspect > elementAspect) {
+      // Video is wider than element - letterbox top/bottom
+      contentWidth = elementRect.width;
+      contentHeight = elementRect.width / videoAspect;
+      contentLeft = elementRect.left;
+      contentTop = elementRect.top + (elementRect.height - contentHeight) / 2;
+    } else {
+      // Video is taller than element - letterbox left/right
+      contentHeight = elementRect.height;
+      contentWidth = elementRect.height * videoAspect;
+      contentTop = elementRect.top;
+      contentLeft = elementRect.left + (elementRect.width - contentWidth) / 2;
+    }
+
+    return {
+      left: contentLeft,
+      top: contentTop,
+      right: contentLeft + contentWidth,
+      bottom: contentTop + contentHeight,
+      width: contentWidth,
+      height: contentHeight
+    };
   }
 
   handleMouseButton(e, pressed) {
@@ -976,6 +1057,9 @@ class SunshineWebRTC {
           this.stats.lastBytesReceived = bytesReceived;
           this.stats.lastFramesDecoded = framesDecoded;
           this.stats.packetsLost = report.packetsLost || 0;
+
+          // Freeze detection
+          this.checkForFreeze(framesDecoded, now);
         }
 
         if (report.type === 'candidate-pair' && report.state === 'succeeded') {
@@ -1095,6 +1179,69 @@ class SunshineWebRTC {
     }
   }
 
+  checkForFreeze(framesDecoded, now) {
+    // Check if frames are being decoded
+    if (framesDecoded > this.freezeDetection.lastFrameCount) {
+      // Frames are arriving, reset freeze detection
+      this.freezeDetection.lastFrameCount = framesDecoded;
+      if (this.freezeDetection.freezeStartTime !== null) {
+        console.log('Video unfroze, frames resuming');
+        this.freezeDetection.freezeStartTime = null;
+        this.freezeDetection.idrRequested = false;
+        this.freezeDetection.reconnectAttempted = false;
+      }
+      return;
+    }
+
+    // No new frames - track how long
+    if (this.freezeDetection.freezeStartTime === null) {
+      this.freezeDetection.freezeStartTime = now;
+      return;
+    }
+
+    const frozenDuration = now - this.freezeDetection.freezeStartTime;
+
+    // First threshold: Request IDR frame
+    if (frozenDuration >= this.FREEZE_THRESHOLD_MS && !this.freezeDetection.idrRequested) {
+      console.log('Video appears frozen, requesting IDR frame');
+      this.sendSignaling('request_idr');
+      this.freezeDetection.idrRequested = true;
+      return;
+    }
+
+    // Second threshold: Request another IDR
+    if (frozenDuration >= this.IDR_RETRY_THRESHOLD_MS && this.freezeDetection.idrRequested && !this.freezeDetection.reconnectAttempted) {
+      console.log('Video still frozen, requesting another IDR frame');
+      this.sendSignaling('request_idr');
+      return;
+    }
+
+    // Third threshold: Attempt reconnect
+    if (frozenDuration >= this.RECONNECT_THRESHOLD_MS && !this.freezeDetection.reconnectAttempted) {
+      console.log('Video frozen for too long, attempting reconnect');
+      this.freezeDetection.reconnectAttempted = true;
+      this.showNotification('Video frozen, reconnecting...');
+      this.attemptReconnect();
+    }
+  }
+
+  attemptReconnect() {
+    // Close existing peer connection and request a new one
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+
+    // Request new SDP offer from server
+    this.sendSignaling('reconnect');
+
+    // Reset freeze detection for the new connection
+    this.freezeDetection.freezeStartTime = null;
+    this.freezeDetection.idrRequested = false;
+    this.freezeDetection.reconnectAttempted = false;
+    this.freezeDetection.lastFrameCount = 0;
+  }
+
   updateGamepadIndicator() {
     if (!this.elements.gamepadIndicator) return;
 
@@ -1209,12 +1356,13 @@ class SunshineWebRTC {
   applyQualitySettings() {
     if (!this.isHost) return;
 
-    const bitrate = parseInt(this.elements.bitrateSlider?.value || '10', 10);
-    const framerate = parseInt(this.elements.framerateSelect?.value || '60', 10);
-    const resolution = this.elements.resolutionSelect?.value || '1080';
+    const bitrate = parseInt(this.elements.bitrateSlider?.value || '3', 10);
+    const framerate = parseInt(this.elements.framerateSelect?.value || '144', 10);
+    const resolution = this.elements.resolutionSelect?.value || '480';
 
     // Map resolution string to actual dimensions
     const resolutionMap = {
+      '480': { width: 853, height: 480 },
       '720': { width: 1280, height: 720 },
       '1080': { width: 1920, height: 1080 },
       '1440': { width: 2560, height: 1440 },
@@ -1237,30 +1385,54 @@ class SunshineWebRTC {
   setGuestKeyboardPermission(enabled) {
     if (!this.isHost) return;
 
-    // Send permission update for all guest players
+    // Send permission update for all existing guest players
+    // Also send with empty peer_id to update the default for future guests
+    let hasGuests = false;
     for (const player of this.players) {
       if (player.peer_id !== this.playerId && player.slot > 0) {
+        hasGuests = true;
         this.sendSignaling('set_guest_keyboard', {
           peer_id: player.peer_id,
           enabled: enabled
         });
       }
     }
+
+    // Always send to update the default for future guests
+    if (!hasGuests) {
+      this.sendSignaling('set_guest_keyboard', {
+        peer_id: '',
+        enabled: enabled
+      });
+    }
+
     this.showNotification(`Guest keyboard ${enabled ? 'enabled' : 'disabled'}`);
   }
 
   setGuestMousePermission(enabled) {
     if (!this.isHost) return;
 
-    // Send permission update for all guest players
+    // Send permission update for all existing guest players
+    // Also send with empty peer_id to update the default for future guests
+    let hasGuests = false;
     for (const player of this.players) {
       if (player.peer_id !== this.playerId && player.slot > 0) {
+        hasGuests = true;
         this.sendSignaling('set_guest_mouse', {
           peer_id: player.peer_id,
           enabled: enabled
         });
       }
     }
+
+    // Always send to update the default for future guests
+    if (!hasGuests) {
+      this.sendSignaling('set_guest_mouse', {
+        peer_id: '',
+        enabled: enabled
+      });
+    }
+
     this.showNotification(`Guest mouse ${enabled ? 'enabled' : 'disabled'}`);
   }
 
@@ -1281,28 +1453,38 @@ class SunshineWebRTC {
   handleQualityUpdated(msg) {
     // Server confirmed quality settings were applied
     if (msg.success) {
-      this.showNotification('Quality settings applied');
-
-      // Update UI to reflect actual values
-      if (msg.bitrate && this.elements.bitrateSlider) {
-        const mbps = Math.round(msg.bitrate / 1000);
-        this.elements.bitrateSlider.value = mbps;
-        if (this.elements.bitrateValue) {
-          this.elements.bitrateValue.textContent = mbps;
-        }
+      // Update UI for all peers
+      this.updateQualityUI(msg);
+      // Only show notification for host (who initiated the change)
+      if (this.isHost) {
+        this.showNotification('Quality settings applied');
+      } else {
+        console.log('Quality settings updated by host');
       }
-      if (msg.framerate && this.elements.framerateSelect) {
-        this.elements.framerateSelect.value = msg.framerate;
-      }
-      if (msg.width && msg.height && this.elements.resolutionSelect) {
-        // Map dimensions back to resolution option
-        if (msg.height <= 720) this.elements.resolutionSelect.value = '720';
-        else if (msg.height <= 1080) this.elements.resolutionSelect.value = '1080';
-        else if (msg.height <= 1440) this.elements.resolutionSelect.value = '1440';
-        else this.elements.resolutionSelect.value = '4k';
-      }
-    } else {
+    } else if (this.isHost) {
       this.showNotification(msg.error || 'Failed to apply quality settings');
+    }
+  }
+
+  updateQualityUI(settings) {
+    // Update UI to reflect actual values
+    if (settings.bitrate && this.elements.bitrateSlider) {
+      const mbps = Math.round(settings.bitrate / 1000);
+      this.elements.bitrateSlider.value = mbps;
+      if (this.elements.bitrateValue) {
+        this.elements.bitrateValue.textContent = mbps;
+      }
+    }
+    if (settings.framerate && this.elements.framerateSelect) {
+      this.elements.framerateSelect.value = settings.framerate;
+    }
+    if (settings.width && settings.height && this.elements.resolutionSelect) {
+      // Map dimensions back to resolution option
+      if (settings.height <= 480) this.elements.resolutionSelect.value = '480';
+      else if (settings.height <= 720) this.elements.resolutionSelect.value = '720';
+      else if (settings.height <= 1080) this.elements.resolutionSelect.value = '1080';
+      else if (settings.height <= 1440) this.elements.resolutionSelect.value = '1440';
+      else this.elements.resolutionSelect.value = '4k';
     }
   }
 

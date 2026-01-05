@@ -254,6 +254,12 @@ namespace webrtc {
         handle_set_quality(peer_id, msg.value("bitrate", 10000), msg.value("framerate", 60),
           msg.value("width", 1920), msg.value("height", 1080));
       }
+      else if (type == "request_idr") {
+        handle_request_idr(peer_id);
+      }
+      else if (type == "reconnect") {
+        handle_reconnect(peer_id);
+      }
       else {
         send_error(peer_id, "Unknown message type: " + type, "unknown_type");
       }
@@ -390,6 +396,13 @@ namespace webrtc {
     response["keyboard_enabled"] = is_host;
     response["mouse_enabled"] = is_host;
     response["players"] = json::parse(build_players_json(SINGLE_SESSION_CODE));
+
+    // Include current video settings so client can update UI
+    auto video_config = video::get_webrtc_config();
+    response["video_settings"]["width"] = video_config.width;
+    response["video_settings"]["height"] = video_config.height;
+    response["video_settings"]["framerate"] = video_config.framerate;
+    response["video_settings"]["bitrate"] = video_config.bitrate;
 
     send_to_peer(peer_id, response.dump());
 
@@ -803,6 +816,12 @@ namespace webrtc {
     // Update default for future guests
     room->set_default_keyboard_access(enabled);
 
+    // If target_peer_id is empty, just update the default (no specific guest to notify)
+    if (target_peer_id.empty()) {
+      BOOST_LOG(info) << "Default keyboard access set to " << enabled << " for future guests";
+      return;
+    }
+
     if (room->set_keyboard_access(target_peer_id, enabled)) {
       // Notify the target peer
       json msg;
@@ -836,6 +855,12 @@ namespace webrtc {
     // Update default for future guests
     room->set_default_mouse_access(enabled);
 
+    // If target_peer_id is empty, just update the default (no specific guest to notify)
+    if (target_peer_id.empty()) {
+      BOOST_LOG(info) << "Default mouse access set to " << enabled << " for future guests";
+      return;
+    }
+
     if (room->set_mouse_access(target_peer_id, enabled)) {
       json msg;
       msg["type"] = "permission_changed";
@@ -847,6 +872,82 @@ namespace webrtc {
       update["players"] = json::parse(build_players_json(room->code()));
       broadcast_to_room(room->code(), update.dump());
     }
+  }
+
+  void
+  SignalingServer::handle_request_idr(const std::string &peer_id) {
+    BOOST_LOG(info) << "IDR frame requested by peer " << peer_id;
+    video::request_webrtc_idr();
+  }
+
+  void
+  SignalingServer::handle_reconnect(const std::string &peer_id) {
+    BOOST_LOG(info) << "Reconnect requested by peer " << peer_id;
+
+    // Get existing peer to preserve state
+    auto existing_peer = PeerManager::instance().find_peer(peer_id);
+    if (!existing_peer) {
+      send_error(peer_id, "Peer not found", "peer_not_found");
+      return;
+    }
+
+    // Get room info to preserve player state
+    auto room = RoomManager::instance().find_room_by_peer(peer_id);
+    if (!room) {
+      send_error(peer_id, "Not in a room", "not_in_room");
+      return;
+    }
+
+    auto player_info = room->get_player(peer_id);
+    if (!player_info) {
+      send_error(peer_id, "Player info not found", "player_not_found");
+      return;
+    }
+
+    // Close and remove the old peer connection
+    existing_peer->close();
+    PeerManager::instance().remove_peer(peer_id);
+
+    // Create a new peer connection for this peer (reusing the same peer_id)
+    auto new_peer = PeerManager::instance().create_peer(peer_id);
+    if (!new_peer) {
+      send_error(peer_id, "Failed to create new peer connection", "peer_error");
+      return;
+    }
+
+    // Update the room's peer reference
+    room->update_peer(peer_id, new_peer);
+
+    // Determine video codec
+    auto video_config = video::get_webrtc_config();
+    const std::string codec = "H264";
+
+    // Add media tracks
+    new_peer->add_video_track(codec);
+    new_peer->add_audio_track();
+    new_peer->create_data_channel("input");
+
+    // Re-register input handler
+    new_peer->on_data_channel_binary("input", [peer_id](const std::vector<std::byte> &data) {
+      InputHandler::instance().process_input(peer_id, data.data(), data.size());
+    });
+
+    // Send reconnect response with preserved state
+    json response;
+    response["type"] = "reconnected";
+    response["peer_id"] = peer_id;
+    response["player_slot"] = static_cast<int>(player_info->slot);
+    response["is_host"] = player_info->is_host;
+    response["is_spectator"] = player_info->is_spectator;
+    response["keyboard_enabled"] = player_info->can_use_keyboard;
+    response["mouse_enabled"] = player_info->can_use_mouse;
+
+    send_to_peer(peer_id, response.dump());
+
+    // Request IDR to help the reconnected peer start decoding
+    video::request_webrtc_idr();
+
+    BOOST_LOG(info) << "Peer " << peer_id << " reconnected, preserving player state";
   }
 
   bool
@@ -921,18 +1022,21 @@ namespace webrtc {
                     << "resolution=" << width << "x" << height;
 
     // Clamp values to reasonable ranges
-    bitrate = std::clamp(bitrate, 1000, 150000);  // 1-150 Mbps in kbps
-    framerate = std::clamp(framerate, 30, 240);
-    width = std::clamp(width, 640, 7680);
+    bitrate = std::clamp(bitrate, 500, 150000);  // 0.5-150 Mbps in kbps
+    framerate = std::clamp(framerate, 15, 240);
+    width = std::clamp(width, 853, 7680);  // Minimum 853x480 (16:9)
     height = std::clamp(height, 480, 4320);
 
-    // Update the config for new sessions
-    // Note: This modifies global config which will affect new encoder sessions
-    ::config::video.max_bitrate = bitrate;
+    // Update the WebRTC video config
+    video::webrtc_config_t new_config;
+    new_config.width = width;
+    new_config.height = height;
+    new_config.framerate = framerate;
+    new_config.bitrate = bitrate;
+    video::set_webrtc_config(new_config);
 
-    // For live session changes, we would need to signal the encoder to reinitialize
-    // This is a placeholder - full implementation would require encoder restart logic
-    // For now, we acknowledge the settings but note they may require stream restart
+    // Also update the global config for other uses
+    ::config::video.max_bitrate = bitrate;
 
     json response;
     response["type"] = "quality_updated";
@@ -941,11 +1045,15 @@ namespace webrtc {
     response["framerate"] = framerate;
     response["width"] = width;
     response["height"] = height;
-    response["note"] = "Bitrate updated. Resolution/framerate changes may require stream restart.";
 
     send_to_peer(peer_id, response.dump());
 
-    BOOST_LOG(info) << "Quality settings updated: bitrate=" << bitrate << "kbps";
+    // Broadcast to all peers so they can update their UI
+    auto room_code = SINGLE_SESSION_CODE;
+    broadcast_to_room(room_code, response.dump(), "");  // Send to everyone including sender
+
+    BOOST_LOG(info) << "Quality settings updated: " << width << "x" << height
+                    << " @ " << framerate << "fps, " << bitrate << "kbps";
   }
 
   std::string

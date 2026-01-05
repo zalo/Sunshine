@@ -47,8 +47,8 @@
         }
 
         #videoElement {
-            max-width: 100%;
-            max-height: 100%;
+            width: 100%;
+            height: 100%;
             object-fit: contain;
         }
 
@@ -711,23 +711,24 @@
             <div class="sidebar-section" id="qualityPanel" style="display: none;">
                 <h3>Stream Quality</h3>
                 <div class="quality-setting">
-                    <label for="bitrateSlider">Bitrate: <span id="bitrateValue">10</span> Mbps</label>
-                    <input type="range" id="bitrateSlider" min="1" max="50" value="10" class="quality-slider">
+                    <label for="bitrateSlider">Bitrate: <span id="bitrateValue">3</span> Mbps</label>
+                    <input type="range" id="bitrateSlider" min="1" max="50" value="3" class="quality-slider">
                 </div>
                 <div class="quality-setting">
                     <label for="framerateSelect">Framerate</label>
                     <select id="framerateSelect" class="quality-select">
                         <option value="30">30 FPS</option>
-                        <option value="60" selected>60 FPS</option>
+                        <option value="60">60 FPS</option>
                         <option value="120">120 FPS</option>
-                        <option value="144">144 FPS</option>
+                        <option value="144" selected>144 FPS</option>
                     </select>
                 </div>
                 <div class="quality-setting">
                     <label for="resolutionSelect">Resolution</label>
                     <select id="resolutionSelect" class="quality-select">
+                        <option value="480" selected>480p (853x480)</option>
                         <option value="720">720p (1280x720)</option>
-                        <option value="1080" selected>1080p (1920x1080)</option>
+                        <option value="1080">1080p (1920x1080)</option>
                         <option value="1440">1440p (2560x1440)</option>
                         <option value="4k">4K (3840x2160)</option>
                     </select>

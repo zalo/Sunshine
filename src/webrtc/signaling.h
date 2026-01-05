@@ -162,6 +162,12 @@ namespace webrtc {
     void
     handle_set_quality(const std::string &peer_id, int bitrate, int framerate, int width, int height);
 
+    void
+    handle_request_idr(const std::string &peer_id);
+
+    void
+    handle_reconnect(const std::string &peer_id);
+
     // Helper to send error response
     void
     send_error(const std::string &peer_id, const std::string &message, const std::string &code);
