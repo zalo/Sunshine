@@ -127,6 +127,9 @@ namespace webrtc {
 
     // Message handlers
     void
+    handle_join(const std::string &peer_id, const std::string &player_name);
+
+    void
     handle_create_room(const std::string &peer_id, const std::string &player_name);
 
     void

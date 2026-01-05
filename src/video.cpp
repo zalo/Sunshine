@@ -2945,6 +2945,8 @@ namespace video {
     std::atomic<bool> webrtc_capture_active{false};
     std::unique_ptr<std::thread> webrtc_capture_thread;
     std::atomic<bool> webrtc_capture_running{false};
+    safe::mail_raw_t::event_t<bool> webrtc_idr_events;  // Stored for requesting IDR frames
+    std::mutex webrtc_idr_mutex;
 
     void webrtc_capture_loop() {
       BOOST_LOG(info) << "WebRTC capture loop started";
@@ -2976,6 +2978,12 @@ namespace video {
       auto shutdown_event = mail->event<bool>(mail::shutdown);
       auto idr_events = mail->event<bool>(mail::idr);
 
+      // Store idr_events globally so we can request IDR frames when new peers join
+      {
+        std::lock_guard<std::mutex> lock(webrtc_idr_mutex);
+        webrtc_idr_events = idr_events;
+      }
+
       idr_events->raise(true);
 
       // Add this session to the sync capture queue
@@ -2984,7 +2992,7 @@ namespace video {
         &join_event,
         shutdown_event,
         mail::man->queue<packet_t>(mail::video_packets),
-        std::move(idr_events),
+        idr_events,  // Pass by copy, not move
         mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
         config,
@@ -3005,6 +3013,12 @@ namespace video {
       // Wait for the capture session to finish
       join_event.view();
 
+      // Clear the stored idr_events
+      {
+        std::lock_guard<std::mutex> lock(webrtc_idr_mutex);
+        webrtc_idr_events.reset();
+      }
+
       BOOST_LOG(info) << "WebRTC capture loop ended";
     }
   }
@@ -3024,7 +3038,9 @@ namespace video {
     webrtc_capture_running.store(true);
     webrtc_capture_active.store(true);
 
-    // Start video sender BEFORE capture thread so it's ready to receive packets
+    // Configure and start video sender BEFORE capture thread so it's ready to receive packets
+    // Set framerate to match the capture config (60 FPS for WebRTC)
+    webrtc::VideoSender::instance().set_framerate(60);
     webrtc::VideoSender::instance().start();
 
     webrtc_capture_thread = std::make_unique<std::thread>(webrtc_capture_loop);
@@ -3053,6 +3069,14 @@ namespace video {
 
   bool is_webrtc_capture_active() {
     return webrtc_capture_active.load();
+  }
+
+  void request_webrtc_idr() {
+    std::lock_guard<std::mutex> lock(webrtc_idr_mutex);
+    if (webrtc_idr_events) {
+      BOOST_LOG(info) << "Requesting IDR frame for WebRTC";
+      webrtc_idr_events->raise(true);
+    }
   }
 
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type) {

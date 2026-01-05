@@ -360,6 +360,12 @@ namespace video {
    */
   bool is_webrtc_capture_active();
 
+  /**
+   * @brief Request an IDR (keyframe) for WebRTC streaming.
+   * Call this when a new peer joins to ensure they can start decoding immediately.
+   */
+  void request_webrtc_idr();
+
   bool validate_encoder(encoder_t &encoder, bool expect_failure);
 
   /**

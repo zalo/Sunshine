@@ -66,6 +66,18 @@ namespace webrtc {
     params_.codec = codec;
   }
 
+  void
+  VideoSender::set_framerate(int fps) {
+    if (fps <= 0) {
+      fps = 60;  // Default to 60 FPS
+    }
+    framerate_ = fps;
+    // RTP video uses 90kHz clock
+    timestamp_increment_ = 90000 / fps;
+    params_.framerate = fps;
+    BOOST_LOG(info) << "WebRTC video sender framerate set to " << fps << " FPS (timestamp increment: " << timestamp_increment_ << ")";
+  }
+
   VideoSender::VideoParams
   VideoSender::get_params() const {
     return params_;
@@ -132,7 +144,7 @@ namespace webrtc {
     uint8_t *data = packet->data();
     size_t size = packet->data_size();
     bool is_keyframe = packet->is_idr();
-    uint32_t timestamp = static_cast<uint32_t>(packet->frame_index() * 3000);  // 90kHz clock for video
+    uint32_t timestamp = static_cast<uint32_t>(packet->frame_index() * timestamp_increment_);
 
     // Packetize based on codec
     switch (codec_) {

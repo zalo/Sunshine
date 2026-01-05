@@ -72,6 +72,15 @@ namespace webrtc {
     set_codec(VideoCodec codec);
 
     /**
+     * @brief Set the video framerate.
+     * Used to calculate correct RTP timestamps.
+     * Must be called before starting.
+     * @param fps Frames per second (e.g., 30, 60)
+     */
+    void
+    set_framerate(int fps);
+
+    /**
      * @brief Get the current codec.
      */
     VideoCodec
@@ -172,6 +181,8 @@ namespace webrtc {
     std::thread sender_thread_;
 
     VideoCodec codec_{VideoCodec::H264};
+    int framerate_{60};  // Default to 60 FPS
+    uint32_t timestamp_increment_{1500};  // 90000 Hz / framerate (1500 for 60 FPS)
     VideoParams params_;
 
     // RTP state

@@ -210,13 +210,19 @@ namespace webrtc {
 
       BOOST_LOG(debug) << "WebRTC message from " << peer_id << ": " << type;
 
-      if (type == "create_room") {
-        handle_create_room(peer_id, msg.value("player_name", "Player"));
+      // New simplified API - single "join" message
+      if (type == "join") {
+        handle_join(peer_id, msg.value("player_name", "Player"));
+      }
+      // Legacy support for old room-based API
+      else if (type == "create_room") {
+        handle_join(peer_id, msg.value("player_name", "Player"));
       }
       else if (type == "join_room") {
-        handle_join_room(peer_id, msg.value("room_code", ""), msg.value("player_name", "Player"));
+        // Ignore room_code, just join the single session
+        handle_join(peer_id, msg.value("player_name", "Player"));
       }
-      else if (type == "leave_room") {
+      else if (type == "leave_room" || type == "leave") {
         handle_leave_room(peer_id);
       }
       else if (type == "join_as_player") {
@@ -254,8 +260,145 @@ namespace webrtc {
     }
   }
 
+  // Fixed room code for single-session mode
+  static const std::string SINGLE_SESSION_CODE = "STREAM";
+
+  void
+  SignalingServer::handle_join(const std::string &peer_id, const std::string &player_name) {
+    // Check if a session already exists
+    auto existing_room = RoomManager::instance().find_room(SINGLE_SESSION_CODE);
+    bool is_first_peer = !existing_room;
+
+    if (is_first_peer) {
+      // First peer - start capture and become host
+      BOOST_LOG(info) << "First WebRTC peer joining, starting video capture";
+      if (!video::start_webrtc_capture()) {
+        BOOST_LOG(warning) << "Failed to start WebRTC video capture, video may not be available";
+      }
+    }
+    // Note: IDR frame request for non-first peers happens in on_state_change when CONNECTED
+
+    // Create peer connection
+    auto peer = PeerManager::instance().create_peer(peer_id);
+    if (!peer) {
+      send_error(peer_id, "Failed to create peer connection", "peer_error");
+      if (is_first_peer) {
+        video::stop_webrtc_capture();
+      }
+      return;
+    }
+
+    std::shared_ptr<Room> room;
+    bool is_host = false;
+    int player_slot = 0;
+
+    if (is_first_peer) {
+      // Create the single session room
+      room = std::make_shared<Room>(SINGLE_SESSION_CODE, peer, player_name);
+      RoomManager::instance().add_room(room);
+      is_host = true;
+      player_slot = 1;
+    } else {
+      room = existing_room;
+      // Add as spectator initially
+      if (!room->add_spectator(peer, player_name)) {
+        PeerManager::instance().remove_peer(peer_id);
+        send_error(peer_id, "Failed to join session", "join_error");
+        return;
+      }
+      is_host = false;
+      player_slot = 0;
+    }
+
+    // Set up peer callbacks for signaling
+    peer->on_local_description([this, peer_id](const std::string &sdp, const std::string &type) {
+      json msg;
+      msg["type"] = "sdp";
+      msg["sdp"] = sdp;
+      msg["sdp_type"] = type;
+      send_to_peer(peer_id, msg.dump());
+    });
+
+    peer->on_local_candidate([this, peer_id](const std::string &candidate, const std::string &mid) {
+      json msg;
+      msg["type"] = "ice";
+      msg["candidate"] = candidate;
+      msg["mid"] = mid;
+      send_to_peer(peer_id, msg.dump());
+    });
+
+    peer->on_state_change([this, peer_id, is_first_peer](PeerState state) {
+      if (state == PeerState::CONNECTED) {
+        // Request IDR frame when a non-first peer connects so they can start decoding
+        if (!is_first_peer) {
+          BOOST_LOG(info) << "Peer " << peer_id << " connected, requesting IDR frame";
+          video::request_webrtc_idr();
+        }
+        json msg;
+        msg["type"] = "stream_ready";
+        send_to_peer(peer_id, msg.dump());
+      }
+    });
+
+    // Determine video codec based on current encoder
+    std::string codec = "H264";
+    auto video_params = VideoSender::instance().get_params();
+    switch (video_params.codec) {
+      case VideoCodec::HEVC:
+        codec = "HEVC";
+        break;
+      case VideoCodec::AV1:
+        codec = "AV1";
+        break;
+      default:
+        codec = "H264";
+    }
+
+    // Add media tracks
+    peer->add_video_track(codec);
+    peer->add_audio_track();
+    peer->create_data_channel("input");
+
+    // Register callback to handle incoming input from this peer
+    peer->on_data_channel_binary("input", [peer_id](const std::vector<std::byte> &data) {
+      InputHandler::instance().process_input(peer_id, data.data(), data.size());
+    });
+
+    // Send joined response (compatible with both room_created and room_joined)
+    json response;
+    response["type"] = is_host ? "room_created" : "room_joined";
+    response["room_code"] = SINGLE_SESSION_CODE;
+    response["peer_id"] = peer_id;
+    response["player_slot"] = player_slot;
+    response["is_host"] = is_host;
+    response["is_spectator"] = !is_host;
+    response["keyboard_enabled"] = is_host;
+    response["mouse_enabled"] = is_host;
+    response["players"] = json::parse(build_players_json(SINGLE_SESSION_CODE));
+
+    send_to_peer(peer_id, response.dump());
+
+    // Notify other players about new peer
+    if (!is_first_peer) {
+      json join_msg;
+      join_msg["type"] = "player_joined";
+      join_msg["player"]["peer_id"] = peer_id;
+      join_msg["player"]["name"] = player_name;
+      join_msg["player"]["slot"] = 0;
+      join_msg["player"]["is_spectator"] = true;
+
+      broadcast_to_room(SINGLE_SESSION_CODE, join_msg.dump(), peer_id);
+    }
+
+    BOOST_LOG(info) << player_name << " joined WebRTC session as " << (is_host ? "host" : "guest");
+  }
+
   void
   SignalingServer::handle_create_room(const std::string &peer_id, const std::string &player_name) {
+    // Legacy: redirect to handle_join
+    handle_join(peer_id, player_name);
+    return;
+
     // Start video capture if this is the first room
     bool first_room = (RoomManager::instance().room_count() == 0);
     if (first_room) {
@@ -358,6 +501,11 @@ namespace webrtc {
   SignalingServer::handle_join_room(const std::string &peer_id,
     const std::string &room_code,
     const std::string &player_name) {
+    // Legacy: redirect to handle_join (ignore room_code, use single session)
+    handle_join(peer_id, player_name);
+    return;
+
+    // Old implementation below kept for reference
     // Find room
     auto room = RoomManager::instance().find_room(room_code);
     if (!room) {

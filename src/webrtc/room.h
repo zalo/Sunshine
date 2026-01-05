@@ -259,6 +259,14 @@ namespace webrtc {
     create_room(std::shared_ptr<Peer> host_peer, const std::string &host_name);
 
     /**
+     * @brief Add an existing room to the manager.
+     * Used for single-session mode where room is created externally.
+     * @param room The room to add.
+     */
+    void
+    add_room(std::shared_ptr<Room> room);
+
+    /**
      * @brief Find a room by code.
      * @param code The 6-character room code.
      * @return The room, or nullptr if not found.

@@ -79,6 +79,7 @@ class SunshineWebRTC {
       createRoomBtn: document.getElementById('createRoomBtn'),
       joinCodeInput: document.getElementById('joinCode'),
       joinRoomBtn: document.getElementById('joinRoomBtn'),
+      autoJoinBtn: document.getElementById('autoJoinBtn'),
       videoContainer: document.getElementById('videoContainer'),
       videoElement: document.getElementById('videoElement'),
       sidebar: document.getElementById('sidebar'),
@@ -110,14 +111,18 @@ class SunshineWebRTC {
   }
 
   bindEvents() {
-    // Start overlay events
-    this.elements.createRoomBtn?.addEventListener('click', () => this.createRoom());
-    this.elements.joinRoomBtn?.addEventListener('click', () => this.joinRoom());
+    // Start overlay events - support both old room-based and new auto-join
+    this.elements.createRoomBtn?.addEventListener('click', () => this.autoJoin());
+    this.elements.joinRoomBtn?.addEventListener('click', () => this.autoJoin());
+    this.elements.autoJoinBtn?.addEventListener('click', () => this.autoJoin());
     this.elements.joinCodeInput?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.joinRoom();
+      if (e.key === 'Enter') this.autoJoin();
+    });
+    this.elements.playerNameInput?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.autoJoin();
     });
 
-    // Format room code input (uppercase, max 6 chars)
+    // Format room code input (uppercase, max 6 chars) - kept for backwards compatibility
     this.elements.joinCodeInput?.addEventListener('input', (e) => {
       e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
     });
@@ -275,33 +280,28 @@ class SunshineWebRTC {
   // ============== Room Management ==============
 
   async createRoom() {
-    const name = this.elements.playerNameInput?.value.trim() || 'Player';
-    this.savePlayerName(name);
-
-    try {
-      this.showLoading('Creating room...');
-      await this.connectSignaling();
-      this.sendSignaling('create_room', { name });
-    } catch (err) {
-      this.hideLoading();
-      this.showError('Failed to connect to server');
-    }
+    // Legacy - redirect to autoJoin
+    this.autoJoin();
   }
 
   async joinRoom() {
-    const code = this.elements.joinCodeInput?.value.trim().toUpperCase();
-    if (!code || code.length !== 6) {
-      this.showError('Please enter a valid 6-character room code');
-      return;
-    }
+    // Legacy - redirect to autoJoin
+    this.autoJoin();
+  }
 
+  /**
+   * Simplified join - automatically joins the single stream session
+   * First user becomes host, subsequent users become guests
+   */
+  async autoJoin() {
     const name = this.elements.playerNameInput?.value.trim() || 'Player';
     this.savePlayerName(name);
 
     try {
-      this.showLoading('Joining room...');
+      this.showLoading('Connecting...');
       await this.connectSignaling();
-      this.sendSignaling('join_room', { room_code: code, name });
+      // Use new simplified 'join' message - server determines if host or guest
+      this.sendSignaling('join', { player_name: name });
     } catch (err) {
       this.hideLoading();
       this.showError('Failed to connect to server');

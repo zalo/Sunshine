@@ -435,6 +435,21 @@ namespace webrtc {
     return room;
   }
 
+  void
+  RoomManager::add_room(std::shared_ptr<Room> room) {
+    if (!room) {
+      return;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    rooms_[room->code()] = room;
+
+    // Add all peers in the room to peer_to_room mapping
+    for (const auto &peer : room->get_peers()) {
+      peer_to_room_[peer->id()] = room->code();
+    }
+  }
+
   std::shared_ptr<Room>
   RoomManager::find_room(const std::string &code) {
     std::lock_guard<std::mutex> lock(mutex_);
