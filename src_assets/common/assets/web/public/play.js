@@ -1557,7 +1557,7 @@ class SunshineWebRTC {
 
     // Map resolution string to actual dimensions
     const resolutionMap = {
-      '480': { width: 853, height: 480 },
+      '480': { width: 854, height: 480 },
       '720': { width: 1280, height: 720 },
       '1080': { width: 1920, height: 1080 },
       '1440': { width: 2560, height: 1440 },

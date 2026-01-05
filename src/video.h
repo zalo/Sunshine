@@ -370,7 +370,7 @@ namespace video {
    * @brief WebRTC video configuration.
    */
   struct webrtc_config_t {
-    int width = 853;
+    int width = 854;
     int height = 480;
     int framerate = 144;
     int bitrate = 3000;  // kbps

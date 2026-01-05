@@ -22,8 +22,8 @@ import asyncio
 app = modal.App("sunshine-webrtc")
 
 # =============================================================================
-# LAYER 1: Ubuntu 24.04 base with runtime dependencies only (no build tools)
-# This layer caches well since it rarely changes
+# LAYER 1: Ubuntu 24.04 base with runtime dependencies and desktop environment
+# Modal provides NVIDIA drivers on GPU instances, Sunshine will auto-detect NVENC
 # =============================================================================
 base_image = (
     modal.Image.from_registry("ubuntu:24.04")
@@ -41,12 +41,26 @@ base_image = (
         "libva2", "libva-drm2", "libva-x11-2",
         "libdrm2", "libgbm1",
         # Audio
-        "libasound2t64",
+        "libasound2t64", "pulseaudio",
         # Other runtime libs
         "libcap2", "libnuma1",
         "libsystemd0", "libudev1",
         "libicu74",  # ICU for Boost.Locale
         "libevdev2",  # Input device library
+        # Desktop environment (XFCE - lightweight)
+        "xfce4", "xfce4-terminal", "dbus-x11",
+        # Fonts for proper text rendering
+        "fonts-dejavu", "fonts-liberation", "fonts-noto-color-emoji",
+        # Window manager utilities
+        "xdotool", "wmctrl",
+        # For Chrome
+        "wget", "gnupg", "ca-certificates",
+    )
+    # Install Google Chrome
+    .run_commands(
+        "wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg",
+        "echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list",
+        "apt-get update && apt-get install -y google-chrome-stable",
     )
     .env({
         "DISPLAY": ":99",
@@ -107,6 +121,72 @@ def start_xvfb():
     print("Xvfb started on display :99")
 
 
+def start_desktop():
+    """Start XFCE desktop environment with terminal and Chrome shortcut."""
+    env = os.environ.copy()
+    env["DISPLAY"] = ":99"
+    env["HOME"] = "/data"
+    env["XDG_CONFIG_HOME"] = "/data/.config"
+    env["XDG_DATA_HOME"] = "/data/.local/share"
+    env["XDG_CACHE_HOME"] = "/data/.cache"
+    env["DBUS_SESSION_BUS_ADDRESS"] = ""
+
+    # Create necessary directories
+    os.makedirs("/data/.config", exist_ok=True)
+    os.makedirs("/data/.local/share", exist_ok=True)
+    os.makedirs("/data/.cache", exist_ok=True)
+    os.makedirs("/data/Desktop", exist_ok=True)
+
+    # Create Chrome desktop shortcut
+    chrome_desktop = """[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Google Chrome
+Comment=Access the Internet
+Exec=/usr/bin/google-chrome-stable --no-sandbox --disable-gpu-sandbox %U
+Icon=google-chrome
+Terminal=false
+Categories=Network;WebBrowser;
+"""
+    with open("/data/Desktop/google-chrome.desktop", "w") as f:
+        f.write(chrome_desktop)
+    os.chmod("/data/Desktop/google-chrome.desktop", 0o755)
+
+    # Start dbus session
+    dbus_proc = subprocess.Popen(
+        ["dbus-launch", "--sh-syntax"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL
+    )
+    dbus_output = dbus_proc.communicate()[0].decode()
+    for line in dbus_output.split('\n'):
+        if '=' in line:
+            key, value = line.split('=', 1)
+            value = value.strip(';').strip("'").strip('"')
+            env[key] = value
+
+    # Start XFCE session
+    subprocess.Popen(
+        ["startxfce4"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(3)
+    print("XFCE desktop started")
+
+    # Open terminal in the center of the screen
+    subprocess.Popen(
+        ["xfce4-terminal", "--geometry=100x30+400+200"],
+        env=env,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    time.sleep(1)
+    print("Terminal opened")
+
+
 def start_sunshine():
     """Start the Sunshine server."""
     build_dir = "/opt/sunshine-build"
@@ -131,8 +211,8 @@ address_family = ipv4
 webrtc_enabled = true
 webrtc_stun_server = stun:stun.l.google.com:19302
 
-# Encoder settings (will auto-detect available encoders)
-encoder = software
+# Encoder settings - try NVENC first, fall back to software
+# Comment out encoder line to let Sunshine auto-detect
 
 # Logging
 min_log_level = info
@@ -300,6 +380,7 @@ def create_proxy_app():
 
 # Global process handles
 _xvfb_started = False
+_desktop_started = False
 _sunshine_proc = None
 
 
@@ -318,15 +399,20 @@ def sunshine_server():
 
     Starts:
     1. Xvfb virtual display
-    2. Sunshine streaming server (internal ports 47990, 47991)
-    3. FastAPI proxy (exposed via ASGI)
+    2. XFCE desktop environment with terminal
+    3. Sunshine streaming server (internal ports 47990, 47991)
+    4. FastAPI proxy (exposed via ASGI)
     """
-    global _xvfb_started, _sunshine_proc
+    global _xvfb_started, _desktop_started, _sunshine_proc
 
     # Start services on first request
     if not _xvfb_started:
         start_xvfb()
         _xvfb_started = True
+
+    if not _desktop_started:
+        start_desktop()
+        _desktop_started = True
 
     if _sunshine_proc is None:
         _sunshine_proc = start_sunshine()

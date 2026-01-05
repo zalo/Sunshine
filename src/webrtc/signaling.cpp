@@ -1024,7 +1024,7 @@ namespace webrtc {
     // Clamp values to reasonable ranges
     bitrate = std::clamp(bitrate, 500, 150000);  // 0.5-150 Mbps in kbps
     framerate = std::clamp(framerate, 15, 240);
-    width = std::clamp(width, 853, 7680);  // Minimum 853x480 (16:9)
+    width = std::clamp(width, 854, 7680);  // Minimum 854x480 (even width for encoders)
     height = std::clamp(height, 480, 4320);
 
     // Update the WebRTC video config
