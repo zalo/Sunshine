@@ -1,7 +1,7 @@
 """
 Modal Deployment for Sunshine WebRTC Streaming Server
 
-This deploys Sunshine on Modal with:
+This deploys a pre-built Sunshine binary on Modal with:
 - GPU support for hardware video encoding (NVENC)
 - Virtual display (Xvfb) for headless operation
 - Single-port HTTP/WebSocket via FastAPI proxy
@@ -16,51 +16,85 @@ import modal
 import subprocess
 import time
 import os
-import signal
 import asyncio
 
 # Define the Modal app
 app = modal.App("sunshine-webrtc")
 
-# Build the Sunshine image with all dependencies
-sunshine_image = (
+# =============================================================================
+# LAYER 1: Ubuntu 24.04 base with runtime dependencies only (no build tools)
+# This layer caches well since it rarely changes
+# =============================================================================
+base_image = (
     modal.Image.from_registry("ubuntu:24.04")
-    # System dependencies
     .apt_install(
-        # Build tools
-        "build-essential", "cmake", "ninja-build", "git", "pkg-config",
-        # Sunshine dependencies
-        "libssl-dev", "libcurl4-openssl-dev", "libminiupnpc-dev",
-        "libboost-all-dev", "libopus-dev", "libpulse-dev",
+        # Python for Modal runtime and proxy
+        "python3", "python3-pip", "python-is-python3",
+        # Runtime dependencies for Sunshine
+        "libssl3", "libcurl4", "libminiupnpc17",
+        "libopus0", "libpulse0",
         # X11 and display
-        "xvfb", "x11-utils", "libx11-dev", "libxcb1-dev",
-        "libxfixes-dev", "libxrandr-dev", "libxtst-dev",
-        "libxcb-shm0-dev", "libxcb-xfixes0-dev",
+        "xvfb", "x11-utils", "libx11-6", "libxcb1",
+        "libxfixes3", "libxrandr2", "libxtst6",
+        "libxcb-shm0", "libxcb-xfixes0",
         # Video encoding
-        "libva-dev", "libdrm-dev", "libgbm-dev",
+        "libva2", "libva-drm2", "libva-x11-2",
+        "libdrm2", "libgbm1",
         # Audio
-        "libasound2-dev",
-        # Other
-        "libcap-dev", "libnuma-dev",
-        # Node.js for web UI build
-        "nodejs", "npm",
+        "libasound2t64",
+        # Other runtime libs
+        "libcap2", "libnuma1",
+        "libsystemd0", "libudev1",
+        "libicu74",  # ICU for Boost.Locale
+        "libevdev2",  # Input device library
     )
-    # Install Python dependencies for proxy
-    .pip_install(
-        "fastapi>=0.104.0",
-        "uvicorn[standard]>=0.24.0",
-        "httpx>=0.25.0",
-        "websockets>=12.0",
-    )
-    # Set environment variables
     .env({
         "DISPLAY": ":99",
     })
 )
 
-# Volume for persistent state (config, credentials, etc.)
+# =============================================================================
+# LAYER 2: Python proxy dependencies
+# =============================================================================
+python_image = base_image.run_commands(
+    "pip install --break-system-packages fastapi>=0.104.0 'uvicorn[standard]>=0.24.0' httpx>=0.25.0 websockets>=12.0"
+)
+
+# =============================================================================
+# LAYER 3: Pre-built Sunshine binary and libraries
+# =============================================================================
+# Copy the entire build directory (contains binary + shared libs)
+build_image = python_image.add_local_dir(
+    "/home/selstad/Desktop/Sunshine/build",
+    remote_path="/opt/sunshine-build",
+    copy=True,
+    ignore=[
+        "CMakeFiles/",
+        "CMakeCache.txt",
+        "cmake_install.cmake",
+        "*.ninja",
+        ".ninja*",
+        "_deps/boost-src/",  # Source not needed, only built libs
+        "libevdev-*/",  # Built from source, not needed at runtime
+    ]
+)
+
+# =============================================================================
+# LAYER 4: Web assets (changes frequently with UI updates)
+# =============================================================================
+final_image = build_image.add_local_dir(
+    "/home/selstad/Desktop/Sunshine/src_assets/common/assets/web/public",
+    remote_path="/opt/sunshine-web",
+    copy=True,
+)
+
+# Volume for persistent state
 sunshine_volume = modal.Volume.from_name("sunshine-data", create_if_missing=True)
 
+
+# =============================================================================
+# Runtime Functions
+# =============================================================================
 
 def start_xvfb():
     """Start Xvfb virtual display."""
@@ -73,30 +107,65 @@ def start_xvfb():
     print("Xvfb started on display :99")
 
 
-def start_sunshine(sunshine_path: str):
+def start_sunshine():
     """Start the Sunshine server."""
-    os.chdir(sunshine_path)
+    build_dir = "/opt/sunshine-build"
+
+    # Set up library paths for the pre-built binary
+    # All needed libs are in lib_deps (Boost is statically linked)
+    lib_paths = [f"{build_dir}/lib_deps"]
 
     # Create data directory
     os.makedirs("/data/sunshine", exist_ok=True)
 
-    # Start Sunshine
+    # Create default config if not exists
+    config_path = "/data/sunshine/sunshine.conf"
+    if not os.path.exists(config_path):
+        with open(config_path, "w") as f:
+            f.write("""# Sunshine Configuration
+sunshine_name = Modal Sunshine
+port = 47989
+address_family = ipv4
+
+# WebRTC settings
+webrtc_enabled = true
+webrtc_stun_server = stun:stun.l.google.com:19302
+
+# Encoder settings (will auto-detect available encoders)
+encoder = software
+
+# Logging
+min_log_level = info
+
+# Web assets path
+file_apps = /opt/sunshine-web
+""")
+
+    # Start Sunshine with library paths
     env = os.environ.copy()
     env["HOME"] = "/data"
     env["XDG_CONFIG_HOME"] = "/data"
+    env["DISPLAY"] = ":99"
+    env["LD_LIBRARY_PATH"] = ":".join(lib_paths) + ":" + env.get("LD_LIBRARY_PATH", "")
+
+    # Run from build directory so relative paths (./assets) work
+    sunshine_bin = "./sunshine"
+    print(f"Starting Sunshine from {build_dir}")
+    print(f"LD_LIBRARY_PATH: {env.get('LD_LIBRARY_PATH', '')}")
 
     proc = subprocess.Popen(
-        [f"{sunshine_path}/build/sunshine", "--config", "/data/sunshine/sunshine.conf"],
+        [sunshine_bin, config_path],  # Config path is positional argument
         env=env,
+        cwd=build_dir,  # Run from build directory for relative paths
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT
     )
 
-    # Wait for startup
+    # Wait for startup and check logs
     time.sleep(5)
 
     if proc.poll() is not None:
-        output = proc.stdout.read().decode()
+        output = proc.stdout.read().decode() if proc.stdout else "No output"
         raise RuntimeError(f"Sunshine failed to start: {output}")
 
     print("Sunshine started successfully!")
@@ -142,7 +211,7 @@ def create_proxy_app():
                 ping_interval=20,
                 ping_timeout=20
             ) as sunshine_ws:
-                logger.info(f"Connected to Sunshine WebSocket")
+                logger.info("Connected to Sunshine WebSocket")
 
                 async def client_to_sunshine():
                     try:
@@ -176,6 +245,11 @@ def create_proxy_app():
                 await websocket.close(code=1011, reason=str(e))
             except:
                 pass
+
+    @web_app.get("/health")
+    async def health_check():
+        """Health check endpoint."""
+        return {"status": "healthy", "service": "sunshine-proxy"}
 
     @web_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
     async def http_proxy(request: Request, path: str):
@@ -221,23 +295,20 @@ def create_proxy_app():
                     media_type="text/plain"
                 )
 
-    @web_app.get("/health")
-    async def health_check():
-        return {"status": "healthy", "service": "sunshine-proxy"}
-
     return web_app
 
 
-# Global process handle
+# Global process handles
+_xvfb_started = False
 _sunshine_proc = None
 
 
 @app.function(
-    image=sunshine_image,
+    image=final_image,
     gpu="L4",  # Good cost/performance for video encoding
     volumes={"/data": sunshine_volume},
     timeout=86400,  # 24 hours max session
-    container_idle_timeout=300,  # 5 min idle before shutdown
+    scaledown_window=300,  # 5 min idle before shutdown
 )
 @modal.concurrent(max_inputs=100)  # Handle many WebSocket connections
 @modal.asgi_app()
@@ -250,19 +321,15 @@ def sunshine_server():
     2. Sunshine streaming server (internal ports 47990, 47991)
     3. FastAPI proxy (exposed via ASGI)
     """
-    global _sunshine_proc
+    global _xvfb_started, _sunshine_proc
 
     # Start services on first request
-    if _sunshine_proc is None:
+    if not _xvfb_started:
         start_xvfb()
+        _xvfb_started = True
 
-        # For now, assume Sunshine is pre-built and available
-        # In production, you'd mount the built binary or build it in the image
-        sunshine_path = "/sunshine"
-        if os.path.exists(f"{sunshine_path}/build/sunshine"):
-            _sunshine_proc = start_sunshine(sunshine_path)
-        else:
-            print("Warning: Sunshine not built. Run 'ninja -C /sunshine/build' first.")
+    if _sunshine_proc is None:
+        _sunshine_proc = start_sunshine()
 
     return create_proxy_app()
 
@@ -272,6 +339,12 @@ def main():
     """Local entrypoint for testing."""
     print("Sunshine WebRTC Modal Deployment")
     print("=" * 40)
+    print("\nUsing pre-built Sunshine binary from local build")
+    print("\nImage layers (cached independently):")
+    print("  1. Ubuntu 24.04 + runtime deps")
+    print("  2. Python proxy deps")
+    print("  3. Pre-built Sunshine binary + libs")
+    print("  4. Web assets")
     print("\nTo deploy:")
     print("  modal deploy modal_deploy/app.py")
     print("\nTo serve (development):")
