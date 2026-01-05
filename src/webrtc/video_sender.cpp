@@ -85,6 +85,9 @@ namespace webrtc {
     // This is the same queue that the regular streaming uses
     auto packets = mail::man->queue<video::packet_t>(mail::video_packets);
 
+    uint64_t packets_received = 0;
+    uint64_t packets_sent = 0;
+
     while (running_.load()) {
       // Wait for and get the next video packet
       auto packet = packets->pop();
@@ -97,6 +100,12 @@ namespace webrtc {
         continue;
       }
 
+      packets_received++;
+      if (packets_received % 60 == 1) {
+        BOOST_LOG(debug) << "Video sender: received packet " << packets_received
+                         << ", connected peers: " << PeerManager::instance().connected_count();
+      }
+
       // Only process if we have connected peers
       if (PeerManager::instance().connected_count() == 0) {
         continue;
@@ -104,9 +113,14 @@ namespace webrtc {
 
       // Process and send the packet via WebRTC
       process_packet(packet);
+      packets_sent++;
+
+      if (packets_sent % 60 == 1) {
+        BOOST_LOG(debug) << "Video sender: sent packet " << packets_sent;
+      }
     }
 
-    BOOST_LOG(info) << "WebRTC video sender loop ended";
+    BOOST_LOG(info) << "WebRTC video sender loop ended (received: " << packets_received << ", sent: " << packets_sent << ")";
   }
 
   void

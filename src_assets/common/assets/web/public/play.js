@@ -342,11 +342,15 @@ class SunshineWebRTC {
   // ============== WebRTC Connection ==============
 
   handleStreamReady(msg) {
-    // Server is ready to send stream, initialize WebRTC
-    if (msg.ice_servers) {
+    // Server is ready to send stream
+    // Note: Peer connection is already initialized in handleRoomCreated/handleRoomJoined
+    // Only update ICE servers if provided and we don't have a connection yet
+    if (msg.ice_servers && !this.pc) {
       this.config.iceServers = msg.ice_servers;
+      this.initPeerConnection();
     }
-    this.initPeerConnection();
+    // Otherwise, the stream is ready on the existing connection
+    console.log('Stream ready on existing connection');
   }
 
   initPeerConnection() {

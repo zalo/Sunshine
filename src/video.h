@@ -342,6 +342,24 @@ namespace video {
     void *channel_data
   );
 
+  /**
+   * @brief Start video capture for WebRTC streaming.
+   * This starts the capture thread without requiring a Moonlight client.
+   * Call stop_webrtc_capture() when done.
+   * @return true if capture started successfully.
+   */
+  bool start_webrtc_capture();
+
+  /**
+   * @brief Stop video capture for WebRTC streaming.
+   */
+  void stop_webrtc_capture();
+
+  /**
+   * @brief Check if WebRTC capture is active.
+   */
+  bool is_webrtc_capture_active();
+
   bool validate_encoder(encoder_t &encoder, bool expect_failure);
 
   /**

@@ -26,7 +26,7 @@ else()
         install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/misc/60-sunshine.rules"
                 DESTINATION "${UDEV_RULES_INSTALL_DIR}")
     endif()
-    if(SYSTEMD_FOUND)
+    if(SYSTEMD_FOUND AND SYSTEMD_USER_UNIT_INSTALL_DIR AND SYSTEMD_MODULES_LOAD_DIR)
         install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sunshine.service"
                 DESTINATION "${SYSTEMD_USER_UNIT_INSTALL_DIR}")
         install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/misc/60-sunshine.conf"

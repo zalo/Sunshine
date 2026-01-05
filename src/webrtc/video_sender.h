@@ -106,6 +106,15 @@ namespace webrtc {
     Stats
     get_stats() const;
 
+    /**
+     * @brief Get the video SSRC.
+     * Peers must use this SSRC when creating their video track.
+     */
+    uint32_t
+    video_ssrc() const {
+      return ssrc_;
+    }
+
   private:
     VideoSender() = default;
     ~VideoSender() = default;

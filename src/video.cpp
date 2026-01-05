@@ -2939,6 +2939,113 @@ namespace video {
   void end_capture_sync(capture_thread_sync_ctx_t &ctx) {
   }
 
+  // WebRTC capture support
+  namespace {
+    std::atomic<bool> webrtc_capture_active{false};
+    std::unique_ptr<std::thread> webrtc_capture_thread;
+    std::atomic<bool> webrtc_capture_running{false};
+
+    void webrtc_capture_loop() {
+      BOOST_LOG(info) << "WebRTC capture loop started";
+
+      // Get reference to capture thread to keep it running
+      auto ref = capture_thread_sync.ref();
+      if (!ref) {
+        BOOST_LOG(error) << "Failed to start WebRTC capture: no encoder available";
+        webrtc_capture_active.store(false);
+        return;
+      }
+
+      // Create a minimal config for WebRTC capture
+      config_t config;
+      config.width = 1920;
+      config.height = 1080;
+      config.framerate = 60;
+      config.bitrate = 5000;  // 5 Mbps
+      config.slicesPerFrame = 1;
+      config.numRefFrames = 1;
+      config.encoderCscMode = 1;  // Full range, BT.601
+      config.videoFormat = 0;  // H.264
+      config.dynamicRange = 0;  // SDR
+      config.chromaSamplingType = 0;  // 4:2:0
+      config.enableIntraRefresh = 0;
+
+      // Create mail system for this capture session
+      auto mail = std::make_shared<safe::mail_raw_t>();
+      auto shutdown_event = mail->event<bool>(mail::shutdown);
+      auto idr_events = mail->event<bool>(mail::idr);
+
+      idr_events->raise(true);
+
+      // Add this session to the sync capture queue
+      safe::signal_t join_event;
+      ref->encode_session_ctx_queue.raise(sync_session_ctx_t {
+        &join_event,
+        shutdown_event,
+        mail::man->queue<packet_t>(mail::video_packets),
+        std::move(idr_events),
+        mail->event<hdr_info_t>(mail::hdr),
+        mail->event<input::touch_port_t>(mail::touch_port),
+        config,
+        1,  // frame_nr
+        nullptr,  // channel_data
+      });
+
+      BOOST_LOG(info) << "WebRTC capture session started";
+
+      // Wait until stop is requested
+      while (webrtc_capture_running.load()) {
+        std::this_thread::sleep_for(100ms);
+      }
+
+      // Signal shutdown
+      shutdown_event->raise(true);
+
+      // Wait for the capture session to finish
+      join_event.view();
+
+      BOOST_LOG(info) << "WebRTC capture loop ended";
+    }
+  }
+
+  bool start_webrtc_capture() {
+    if (webrtc_capture_active.load()) {
+      BOOST_LOG(debug) << "WebRTC capture already active";
+      return true;
+    }
+
+    if (!chosen_encoder) {
+      BOOST_LOG(error) << "No encoder available for WebRTC capture";
+      return false;
+    }
+
+    BOOST_LOG(info) << "Starting WebRTC capture";
+    webrtc_capture_running.store(true);
+    webrtc_capture_active.store(true);
+    webrtc_capture_thread = std::make_unique<std::thread>(webrtc_capture_loop);
+
+    return true;
+  }
+
+  void stop_webrtc_capture() {
+    if (!webrtc_capture_active.load()) {
+      return;
+    }
+
+    BOOST_LOG(info) << "Stopping WebRTC capture";
+    webrtc_capture_running.store(false);
+
+    if (webrtc_capture_thread && webrtc_capture_thread->joinable()) {
+      webrtc_capture_thread->join();
+    }
+    webrtc_capture_thread.reset();
+    webrtc_capture_active.store(false);
+  }
+
+  bool is_webrtc_capture_active() {
+    return webrtc_capture_active.load();
+  }
+
   platf::mem_type_e map_base_dev_type(AVHWDeviceType type) {
     switch (type) {
       case AV_HWDEVICE_TYPE_D3D11VA:
