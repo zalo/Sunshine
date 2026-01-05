@@ -61,13 +61,17 @@ class SunshineWebRTC {
     // Configuration
     // Determine signaling URL based on access method
     let signalingUrl;
-    if (window.location.hostname.endsWith('.sels.tech')) {
-      // Use sibling subdomain for Cloudflare tunnel (deep subdomains don't get SSL certs)
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+    if (window.location.hostname.endsWith('.modal.run')) {
+      // Modal deployment - use route-based WebSocket on same host/port
+      signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;
+    } else if (window.location.hostname.endsWith('.sels.tech')) {
+      // Cloudflare tunnel - use sibling subdomain (deep subdomains don't get SSL certs)
       signalingUrl = 'wss://sunshine-signaling.sels.tech';
     } else {
-      // Local access - WebSocket signaling runs on the main port + 1
+      // Local/direct access - WebSocket signaling runs on the main port + 1
       const wsPort = parseInt(window.location.port || '47990') + 1;
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       signalingUrl = `${wsProtocol}//${window.location.hostname}:${wsPort}`;
     }
     this.config = {
