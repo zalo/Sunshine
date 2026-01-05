@@ -113,6 +113,8 @@ class SunshineWebRTC {
       statsPacketLoss: document.getElementById('statsPacketLoss'),
       gamepadIndicator: document.getElementById('gamepadIndicator'),
       fullscreenBtn: document.getElementById('fullscreenBtn'),
+      keyboardBtn: document.getElementById('keyboardBtn'),
+      mobileKeyboardInput: document.getElementById('mobileKeyboardInput'),
       leaveBtn: document.getElementById('leaveBtn'),
       connectionStatus: document.getElementById('connectionStatus'),
       allowKeyboard: document.getElementById('allowKeyboard'),
@@ -145,7 +147,15 @@ class SunshineWebRTC {
     this.elements.copyCodeBtn?.addEventListener('click', () => this.copyRoomCode());
     this.elements.joinAsPlayerBtn?.addEventListener('click', () => this.requestJoinAsPlayer());
     this.elements.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
+    this.elements.keyboardBtn?.addEventListener('click', () => this.toggleMobileKeyboard());
     this.elements.leaveBtn?.addEventListener('click', () => this.leaveRoom());
+
+    // Mobile keyboard input events
+    if (this.elements.mobileKeyboardInput) {
+      this.elements.mobileKeyboardInput.addEventListener('input', (e) => this.handleMobileKeyboardInput(e));
+      this.elements.mobileKeyboardInput.addEventListener('keydown', (e) => this.handleMobileKeyDown(e));
+      this.elements.mobileKeyboardInput.addEventListener('blur', () => this.handleMobileKeyboardBlur());
+    }
 
     // Permission toggle events (host only)
     this.elements.allowKeyboard?.addEventListener('change', (e) => {
@@ -1151,13 +1161,19 @@ class SunshineWebRTC {
     }
     if (this.elements.sidebar) {
       this.elements.sidebar.classList.remove('hidden');
-      this.elements.sidebar.classList.add('open'); // Show sidebar by default
+      // Only open sidebar by default on non-touch devices (desktop)
+      if (!this.isTouchDevice()) {
+        this.elements.sidebar.classList.add('open');
+      }
     }
     if (this.elements.sidebarToggle) {
       this.elements.sidebarToggle.classList.remove('hidden');
     }
     if (this.elements.fullscreenBtn) {
       this.elements.fullscreenBtn.classList.remove('hidden');
+    }
+    if (this.elements.keyboardBtn) {
+      this.elements.keyboardBtn.classList.remove('hidden');
     }
   }
 
@@ -1353,6 +1369,113 @@ class SunshineWebRTC {
     } else {
       this.elements.videoContainer?.requestFullscreen();
     }
+  }
+
+  isTouchDevice() {
+    return ('ontouchstart' in window) ||
+           (navigator.maxTouchPoints > 0) ||
+           (navigator.msMaxTouchPoints > 0) ||
+           (window.matchMedia('(pointer: coarse)').matches);
+  }
+
+  toggleMobileKeyboard() {
+    const input = this.elements.mobileKeyboardInput;
+    const btn = this.elements.keyboardBtn;
+    if (!input) return;
+
+    if (document.activeElement === input) {
+      // Keyboard is open, close it
+      input.blur();
+      btn?.classList.remove('active');
+    } else {
+      // Open keyboard
+      input.focus();
+      btn?.classList.add('active');
+    }
+  }
+
+  handleMobileKeyboardInput(e) {
+    // Handle text input from mobile keyboard
+    const text = e.target.value;
+    if (!text || !this.keyboardEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    // Send each character as a key press
+    for (const char of text) {
+      // Send key down then key up for each character
+      const keyCode = this.charToKeyCode(char);
+      if (keyCode) {
+        this.sendKeyEvent(keyCode, true);  // key down
+        this.sendKeyEvent(keyCode, false); // key up
+      }
+    }
+
+    // Clear the input for next input
+    e.target.value = '';
+  }
+
+  handleMobileKeyDown(e) {
+    // Handle special keys (backspace, enter, etc.) from mobile keyboard
+    if (!this.keyboardEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    const specialKeys = {
+      'Backspace': 0x08,
+      'Enter': 0x0D,
+      'Tab': 0x09,
+      'Escape': 0x1B,
+      'ArrowLeft': 0x25,
+      'ArrowUp': 0x26,
+      'ArrowRight': 0x27,
+      'ArrowDown': 0x28
+    };
+
+    const keyCode = specialKeys[e.key];
+    if (keyCode) {
+      e.preventDefault();
+      this.sendKeyEvent(keyCode, true);  // key down
+      this.sendKeyEvent(keyCode, false); // key up
+    }
+  }
+
+  handleMobileKeyboardBlur() {
+    // Keyboard closed
+    this.elements.keyboardBtn?.classList.remove('active');
+  }
+
+  charToKeyCode(char) {
+    // Convert character to Windows virtual key code
+    const code = char.toUpperCase().charCodeAt(0);
+
+    // Letters A-Z
+    if (code >= 65 && code <= 90) {
+      return code;
+    }
+
+    // Numbers 0-9
+    if (code >= 48 && code <= 57) {
+      return code;
+    }
+
+    // Space
+    if (char === ' ') return 0x20;
+
+    // Common punctuation (simplified mapping)
+    const punctuation = {
+      '.': 0xBE,
+      ',': 0xBC,
+      '/': 0xBF,
+      ';': 0xBA,
+      "'": 0xDE,
+      '[': 0xDB,
+      ']': 0xDD,
+      '\\': 0xDC,
+      '-': 0xBD,
+      '=': 0xBB,
+      '`': 0xC0
+    };
+
+    return punctuation[char] || null;
   }
 
   showLoading(message) {

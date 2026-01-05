@@ -514,6 +514,42 @@
             opacity: 1;
         }
 
+        /* Keyboard toggle button (mobile only) */
+        #keyboardBtn {
+            position: fixed;
+            bottom: 1rem;
+            right: 4.5rem;
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            cursor: pointer;
+            z-index: 150;
+            opacity: 0.3;
+            transition: opacity 0.2s;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #keyboardBtn:hover, #keyboardBtn.active {
+            opacity: 1;
+        }
+
+        #keyboardBtn.active {
+            background: var(--accent);
+            color: var(--bg-primary);
+        }
+
+        /* Show keyboard button on touch devices */
+        @media (pointer: coarse) {
+            #keyboardBtn {
+                display: flex;
+            }
+        }
+
         /* Toast notifications */
         .toast {
             position: fixed;
@@ -771,12 +807,31 @@
         <span>Gamepads: </span><span id="gamepadCount">0/0</span>
     </div>
 
+    <!-- Keyboard Toggle Button (mobile only) -->
+    <button id="keyboardBtn" class="hidden" title="Toggle Keyboard">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+            <line x1="6" y1="8" x2="6" y2="8"/>
+            <line x1="10" y1="8" x2="10" y2="8"/>
+            <line x1="14" y1="8" x2="14" y2="8"/>
+            <line x1="18" y1="8" x2="18" y2="8"/>
+            <line x1="6" y1="12" x2="6" y2="12"/>
+            <line x1="10" y1="12" x2="10" y2="12"/>
+            <line x1="14" y1="12" x2="14" y2="12"/>
+            <line x1="18" y1="12" x2="18" y2="12"/>
+            <line x1="7" y1="16" x2="17" y2="16"/>
+        </svg>
+    </button>
+
     <!-- Fullscreen Button -->
     <button id="fullscreenBtn" class="hidden" title="Toggle Fullscreen">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
         </svg>
     </button>
+
+    <!-- Hidden input for mobile keyboard -->
+    <input type="text" id="mobileKeyboardInput" style="position: fixed; left: -9999px; opacity: 0;" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
 
     <script src="play.js?v=2"></script>
 </body>
