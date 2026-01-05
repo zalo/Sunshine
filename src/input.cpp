@@ -1647,4 +1647,54 @@ namespace input {
 
     return input;
   }
+
+  // Direct input functions for WebRTC (bypass packet protocol)
+  void keyboard(uint16_t key_code, bool release) {
+    if (!config::input.keyboard) {
+      return;
+    }
+
+    platf::keyboard_update(platf_input, key_code & 0x00FF, release, 0);
+  }
+
+  void mouse_move_rel(int16_t delta_x, int16_t delta_y) {
+    if (!config::input.mouse) {
+      return;
+    }
+
+    platf::move_mouse(platf_input, delta_x, delta_y);
+  }
+
+  void mouse_move_abs(uint16_t x, uint16_t y) {
+    if (!config::input.mouse) {
+      return;
+    }
+
+    // For absolute mouse, we need a touch port but don't have one
+    // Use a simple approach: treat as relative movement from current position
+    // This is a simplified version - full absolute support would need touch_port
+    platf::touch_port_t port {0, 0, 65535, 65535};
+    platf::abs_mouse(platf_input, port, (float) x, (float) y);
+  }
+
+  void mouse_button(uint8_t button, bool pressed) {
+    if (!config::input.mouse) {
+      return;
+    }
+
+    platf::button_mouse(platf_input, button, !pressed);
+  }
+
+  void mouse_scroll(int16_t amount, bool horizontal) {
+    if (!config::input.mouse) {
+      return;
+    }
+
+    if (horizontal) {
+      platf::hscroll(platf_input, amount);
+    }
+    else {
+      platf::scroll(platf_input, amount);
+    }
+  }
 }  // namespace input

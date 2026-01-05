@@ -45,4 +45,44 @@ namespace input {
    * @return The major and minor axis pair.
    */
   std::pair<float, float> scale_client_contact_area(const std::pair<float, float> &val, uint16_t rotation, const std::pair<float, float> &scalar);
+
+  /**
+   * @brief Direct input functions for WebRTC (bypasses packet protocol).
+   * These are simpler wrappers around platform input functions.
+   */
+
+  /**
+   * @brief Send a keyboard key event.
+   * @param key_code Virtual key code.
+   * @param release true for key up, false for key down.
+   */
+  void keyboard(uint16_t key_code, bool release);
+
+  /**
+   * @brief Send relative mouse movement.
+   * @param delta_x X movement delta.
+   * @param delta_y Y movement delta.
+   */
+  void mouse_move_rel(int16_t delta_x, int16_t delta_y);
+
+  /**
+   * @brief Send absolute mouse position.
+   * @param x Absolute X position (0-65535 normalized).
+   * @param y Absolute Y position (0-65535 normalized).
+   */
+  void mouse_move_abs(uint16_t x, uint16_t y);
+
+  /**
+   * @brief Send a mouse button event.
+   * @param button Button number (1=left, 2=middle, 3=right, 4=x1, 5=x2).
+   * @param pressed true for button down, false for button up.
+   */
+  void mouse_button(uint8_t button, bool pressed);
+
+  /**
+   * @brief Send a mouse scroll event.
+   * @param amount Scroll amount (positive = up/right, negative = down/left).
+   * @param horizontal true for horizontal scroll, false for vertical.
+   */
+  void mouse_scroll(int16_t amount, bool horizontal = false);
 }  // namespace input

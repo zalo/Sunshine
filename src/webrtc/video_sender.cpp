@@ -89,11 +89,11 @@ namespace webrtc {
     uint64_t packets_sent = 0;
 
     while (running_.load()) {
-      // Wait for and get the next video packet
-      auto packet = packets->pop();
+      // Wait for next video packet with timeout so we can check running_ periodically
+      auto packet = packets->pop(std::chrono::milliseconds(100));
 
       if (!packet) {
-        // Queue was stopped or empty with timeout
+        // Queue was stopped, empty, or timeout - check if we should continue
         if (!running_.load()) {
           break;
         }

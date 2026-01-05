@@ -86,8 +86,15 @@ class SunshineWebRTC {
       roomCodeDisplay: document.getElementById('roomCodeDisplay'),
       copyCodeBtn: document.getElementById('copyCodeBtn'),
       playerList: document.getElementById('playerList'),
+      joinPlayerSection: document.getElementById('joinPlayerSection'),
       joinAsPlayerBtn: document.getElementById('joinAsPlayerBtn'),
       permissionsPanel: document.getElementById('permissionsPanel'),
+      qualityPanel: document.getElementById('qualityPanel'),
+      bitrateSlider: document.getElementById('bitrateSlider'),
+      bitrateValue: document.getElementById('bitrateValue'),
+      framerateSelect: document.getElementById('framerateSelect'),
+      resolutionSelect: document.getElementById('resolutionSelect'),
+      applyQualityBtn: document.getElementById('applyQualityBtn'),
       statsBitrate: document.getElementById('statsBitrate'),
       statsFps: document.getElementById('statsFps'),
       statsRtt: document.getElementById('statsRtt'),
@@ -122,8 +129,23 @@ class SunshineWebRTC {
     this.elements.fullscreenBtn?.addEventListener('click', () => this.toggleFullscreen());
     this.elements.leaveBtn?.addEventListener('click', () => this.leaveRoom());
 
-    // Video events
-    this.elements.videoElement?.addEventListener('click', () => this.requestPointerLock());
+    // Quality settings events
+    this.elements.bitrateSlider?.addEventListener('input', (e) => {
+      if (this.elements.bitrateValue) {
+        this.elements.bitrateValue.textContent = e.target.value;
+      }
+    });
+    this.elements.applyQualityBtn?.addEventListener('click', () => this.applyQualitySettings());
+
+    // Video events - click to focus for keyboard input (no pointer lock)
+    this.elements.videoElement?.addEventListener('click', () => {
+      // Focus the video container to enable keyboard input
+      this.elements.videoContainer?.focus();
+    });
+    // Make video container focusable
+    if (this.elements.videoContainer) {
+      this.elements.videoContainer.tabIndex = 0;
+    }
 
     // Keyboard events
     document.addEventListener('keydown', (e) => this.handleKeyDown(e));
@@ -242,6 +264,9 @@ class SunshineWebRTC {
       case 'peer_left':
         this.showNotification(`${msg.name} left`);
         break;
+      case 'quality_updated':
+        this.handleQualityUpdated(msg);
+        break;
       default:
         console.warn('Unknown signaling message type:', msg.type);
     }
@@ -291,6 +316,12 @@ class SunshineWebRTC {
     this.isHost = true;
     this.players = msg.players || [];
 
+    // Set initial permissions from server
+    this.keyboardEnabled = msg.keyboard_enabled ?? true;  // Default true for host
+    this.mouseEnabled = msg.mouse_enabled ?? true;        // Default true for host
+
+    console.log('Room created - keyboard:', this.keyboardEnabled, 'mouse:', this.mouseEnabled);
+
     // Initialize peer connection immediately - server sends SDP right after room creation
     this.initPeerConnection();
 
@@ -302,9 +333,15 @@ class SunshineWebRTC {
     this.hideLoading();
     this.roomCode = msg.room_code;
     this.playerId = msg.peer_id;
-    this.playerSlot = msg.slot || 0;
+    this.playerSlot = msg.slot || msg.player_slot || 0;
     this.isHost = msg.is_host || false;
     this.players = msg.players || [];
+
+    // Set initial permissions from server
+    this.keyboardEnabled = msg.keyboard_enabled ?? false;
+    this.mouseEnabled = msg.mouse_enabled ?? false;
+
+    console.log('Room joined - keyboard:', this.keyboardEnabled, 'mouse:', this.mouseEnabled, 'slot:', this.playerSlot);
 
     // Initialize peer connection immediately - server sends SDP right after room join
     this.initPeerConnection();
@@ -674,8 +711,14 @@ class SunshineWebRTC {
 
   handleKeyDown(e) {
     if (!this.keyboardEnabled || this.playerSlot === 0) return;
-    if (!this.pointerLocked) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    // Only capture keyboard when video container is focused or mouse is over video
+    const activeElement = document.activeElement;
+    const isVideoFocused = activeElement === this.elements.videoElement ||
+                           activeElement === this.elements.videoContainer ||
+                           this.elements.videoContainer?.contains(activeElement);
+    if (!isVideoFocused) return;
 
     e.preventDefault();
     this.sendKeyEvent(e.code, true, e.repeat);
@@ -683,54 +726,69 @@ class SunshineWebRTC {
 
   handleKeyUp(e) {
     if (!this.keyboardEnabled || this.playerSlot === 0) return;
-    if (!this.pointerLocked) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    // Only capture keyboard when video container is focused
+    const activeElement = document.activeElement;
+    const isVideoFocused = activeElement === this.elements.videoElement ||
+                           activeElement === this.elements.videoContainer ||
+                           this.elements.videoContainer?.contains(activeElement);
+    if (!isVideoFocused) return;
 
     e.preventDefault();
     this.sendKeyEvent(e.code, false, false);
   }
 
   sendKeyEvent(code, pressed, repeat) {
-    const buffer = new ArrayBuffer(4);
+    // Format: type(1) | key_code(2) | modifiers(1) | pressed(1) = 5 bytes
+    const buffer = new ArrayBuffer(5);
     const view = new DataView(buffer);
 
-    view.setUint8(0, 0x02); // Type: keyboard
-    view.setUint8(1, pressed ? 1 : 0);
-    view.setUint16(2, this.keyCodeToScancode(code), true);
+    view.setUint8(0, 0x02);  // Type: keyboard
+    view.setUint16(1, this.keyCodeToVK(code), true);  // key_code (Windows VK code, little-endian)
+    view.setUint8(3, 0);     // modifiers (none for now)
+    view.setUint8(4, pressed ? 1 : 0);  // pressed
 
     this.dataChannel.send(buffer);
   }
 
-  keyCodeToScancode(code) {
-    // Map JavaScript key codes to USB HID scancodes
+  keyCodeToVK(code) {
+    // Map JavaScript key codes to Windows Virtual Key codes (VK_*)
     const mapping = {
-      'KeyA': 0x04, 'KeyB': 0x05, 'KeyC': 0x06, 'KeyD': 0x07,
-      'KeyE': 0x08, 'KeyF': 0x09, 'KeyG': 0x0A, 'KeyH': 0x0B,
-      'KeyI': 0x0C, 'KeyJ': 0x0D, 'KeyK': 0x0E, 'KeyL': 0x0F,
-      'KeyM': 0x10, 'KeyN': 0x11, 'KeyO': 0x12, 'KeyP': 0x13,
-      'KeyQ': 0x14, 'KeyR': 0x15, 'KeyS': 0x16, 'KeyT': 0x17,
-      'KeyU': 0x18, 'KeyV': 0x19, 'KeyW': 0x1A, 'KeyX': 0x1B,
-      'KeyY': 0x1C, 'KeyZ': 0x1D,
-      'Digit1': 0x1E, 'Digit2': 0x1F, 'Digit3': 0x20, 'Digit4': 0x21,
-      'Digit5': 0x22, 'Digit6': 0x23, 'Digit7': 0x24, 'Digit8': 0x25,
-      'Digit9': 0x26, 'Digit0': 0x27,
-      'Enter': 0x28, 'Escape': 0x29, 'Backspace': 0x2A, 'Tab': 0x2B,
-      'Space': 0x2C, 'Minus': 0x2D, 'Equal': 0x2E, 'BracketLeft': 0x2F,
-      'BracketRight': 0x30, 'Backslash': 0x31, 'Semicolon': 0x33,
-      'Quote': 0x34, 'Backquote': 0x35, 'Comma': 0x36, 'Period': 0x37,
-      'Slash': 0x38, 'CapsLock': 0x39,
-      'F1': 0x3A, 'F2': 0x3B, 'F3': 0x3C, 'F4': 0x3D,
-      'F5': 0x3E, 'F6': 0x3F, 'F7': 0x40, 'F8': 0x41,
-      'F9': 0x42, 'F10': 0x43, 'F11': 0x44, 'F12': 0x45,
-      'PrintScreen': 0x46, 'ScrollLock': 0x47, 'Pause': 0x48,
-      'Insert': 0x49, 'Home': 0x4A, 'PageUp': 0x4B,
-      'Delete': 0x4C, 'End': 0x4D, 'PageDown': 0x4E,
-      'ArrowRight': 0x4F, 'ArrowLeft': 0x50, 'ArrowDown': 0x51, 'ArrowUp': 0x52,
-      'NumLock': 0x53,
-      'ShiftLeft': 0xE1, 'ShiftRight': 0xE5,
-      'ControlLeft': 0xE0, 'ControlRight': 0xE4,
-      'AltLeft': 0xE2, 'AltRight': 0xE6,
-      'MetaLeft': 0xE3, 'MetaRight': 0xE7
+      // Letters (VK_A-VK_Z = 0x41-0x5A)
+      'KeyA': 0x41, 'KeyB': 0x42, 'KeyC': 0x43, 'KeyD': 0x44,
+      'KeyE': 0x45, 'KeyF': 0x46, 'KeyG': 0x47, 'KeyH': 0x48,
+      'KeyI': 0x49, 'KeyJ': 0x4A, 'KeyK': 0x4B, 'KeyL': 0x4C,
+      'KeyM': 0x4D, 'KeyN': 0x4E, 'KeyO': 0x4F, 'KeyP': 0x50,
+      'KeyQ': 0x51, 'KeyR': 0x52, 'KeyS': 0x53, 'KeyT': 0x54,
+      'KeyU': 0x55, 'KeyV': 0x56, 'KeyW': 0x57, 'KeyX': 0x58,
+      'KeyY': 0x59, 'KeyZ': 0x5A,
+      // Numbers (VK_0-VK_9 = 0x30-0x39)
+      'Digit0': 0x30, 'Digit1': 0x31, 'Digit2': 0x32, 'Digit3': 0x33,
+      'Digit4': 0x34, 'Digit5': 0x35, 'Digit6': 0x36, 'Digit7': 0x37,
+      'Digit8': 0x38, 'Digit9': 0x39,
+      // Function keys (VK_F1-VK_F12 = 0x70-0x7B)
+      'F1': 0x70, 'F2': 0x71, 'F3': 0x72, 'F4': 0x73,
+      'F5': 0x74, 'F6': 0x75, 'F7': 0x76, 'F8': 0x77,
+      'F9': 0x78, 'F10': 0x79, 'F11': 0x7A, 'F12': 0x7B,
+      // Control keys
+      'Backspace': 0x08, 'Tab': 0x09, 'Enter': 0x0D, 'Escape': 0x1B, 'Space': 0x20,
+      'CapsLock': 0x14, 'NumLock': 0x90, 'ScrollLock': 0x91,
+      // Navigation keys
+      'PageUp': 0x21, 'PageDown': 0x22, 'End': 0x23, 'Home': 0x24,
+      'ArrowLeft': 0x25, 'ArrowUp': 0x26, 'ArrowRight': 0x27, 'ArrowDown': 0x28,
+      'Insert': 0x2D, 'Delete': 0x2E,
+      // Punctuation (OEM keys)
+      'Semicolon': 0xBA, 'Equal': 0xBB, 'Comma': 0xBC, 'Minus': 0xBD,
+      'Period': 0xBE, 'Slash': 0xBF, 'Backquote': 0xC0,
+      'BracketLeft': 0xDB, 'Backslash': 0xDC, 'BracketRight': 0xDD, 'Quote': 0xDE,
+      // Modifier keys
+      'ShiftLeft': 0xA0, 'ShiftRight': 0xA1,
+      'ControlLeft': 0xA2, 'ControlRight': 0xA3,
+      'AltLeft': 0xA4, 'AltRight': 0xA5,
+      'MetaLeft': 0x5B, 'MetaRight': 0x5C,
+      // Special
+      'PrintScreen': 0x2C, 'Pause': 0x13
     };
 
     return mapping[code] || 0;
@@ -740,16 +798,33 @@ class SunshineWebRTC {
 
   handleMouseMove(e) {
     if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.pointerLocked) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
-    this.sendMouseMove(e.movementX, e.movementY);
+    // Only handle mouse over the video element
+    if (!this.elements.videoElement) return;
+    const rect = this.elements.videoElement.getBoundingClientRect();
+
+    // Check if mouse is over video
+    if (e.clientX < rect.left || e.clientX > rect.right ||
+        e.clientY < rect.top || e.clientY > rect.bottom) {
+      return;
+    }
+
+    // Calculate normalized absolute position (0-65535)
+    const relX = (e.clientX - rect.left) / rect.width;
+    const relY = (e.clientY - rect.top) / rect.height;
+    const absX = Math.round(relX * 65535);
+    const absY = Math.round(relY * 65535);
+
+    this.sendMouseMoveAbs(absX, absY);
   }
 
   handleMouseButton(e, pressed) {
     if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.pointerLocked) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+    // Only handle clicks on the video element
+    if (e.target !== this.elements.videoElement) return;
 
     e.preventDefault();
     this.sendMouseButton(e.button, pressed);
@@ -757,21 +832,26 @@ class SunshineWebRTC {
 
   handleMouseWheel(e) {
     if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.pointerLocked) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
+    // Only handle scroll over the video element
+    if (e.target !== this.elements.videoElement) return;
+
     e.preventDefault();
-    this.sendMouseScroll(e.deltaX, e.deltaY);
+    // Negate deltaY to fix scroll direction (browser deltaY is inverted)
+    this.sendMouseScroll(e.deltaX, -e.deltaY);
   }
 
-  sendMouseMove(dx, dy) {
+  sendMouseMoveAbs(absX, absY) {
+    // Format: type(1) | flags(1) | abs_x(2) | abs_y(2) = 6 bytes
+    // flags: 0x01 = absolute mode
     const buffer = new ArrayBuffer(6);
     const view = new DataView(buffer);
 
     view.setUint8(0, 0x03); // Type: mouse move
-    view.setUint8(1, 0); // Reserved
-    view.setInt16(2, dx, true);
-    view.setInt16(4, dy, true);
+    view.setUint8(1, 0x01); // Flags: absolute mode
+    view.setUint16(2, absX, true);
+    view.setUint16(4, absY, true);
 
     this.dataChannel.send(buffer);
   }
@@ -915,14 +995,19 @@ class SunshineWebRTC {
     // Update player list
     this.updatePlayerList();
 
-    // Show/hide join as player button
-    if (this.elements.joinAsPlayerBtn) {
-      this.elements.joinAsPlayerBtn.style.display = this.playerSlot === 0 ? 'block' : 'none';
+    // Show/hide spectator section (only show if spectator)
+    if (this.elements.joinPlayerSection) {
+      this.elements.joinPlayerSection.style.display = this.playerSlot === 0 ? 'block' : 'none';
     }
 
     // Show/hide permissions panel (host only)
     if (this.elements.permissionsPanel) {
       this.elements.permissionsPanel.style.display = this.isHost ? 'block' : 'none';
+    }
+
+    // Show/hide quality panel (host only)
+    if (this.elements.qualityPanel) {
+      this.elements.qualityPanel.style.display = this.isHost ? 'block' : 'none';
     }
 
     // Start gamepad polling if we're a player
@@ -1078,6 +1163,64 @@ class SunshineWebRTC {
   handleSignalingError(msg) {
     this.hideLoading();
     this.showError(msg.message || 'An error occurred');
+  }
+
+  // ============== Quality Settings ==============
+
+  applyQualitySettings() {
+    if (!this.isHost) return;
+
+    const bitrate = parseInt(this.elements.bitrateSlider?.value || '10', 10);
+    const framerate = parseInt(this.elements.framerateSelect?.value || '60', 10);
+    const resolution = this.elements.resolutionSelect?.value || '1080';
+
+    // Map resolution string to actual dimensions
+    const resolutionMap = {
+      '720': { width: 1280, height: 720 },
+      '1080': { width: 1920, height: 1080 },
+      '1440': { width: 2560, height: 1440 },
+      '4k': { width: 3840, height: 2160 }
+    };
+
+    const dims = resolutionMap[resolution] || resolutionMap['1080'];
+
+    // Send quality settings to server via signaling
+    this.sendSignaling('set_quality', {
+      bitrate: bitrate * 1000, // Convert Mbps to kbps
+      framerate: framerate,
+      width: dims.width,
+      height: dims.height
+    });
+
+    this.showNotification('Applying quality settings...');
+  }
+
+  handleQualityUpdated(msg) {
+    // Server confirmed quality settings were applied
+    if (msg.success) {
+      this.showNotification('Quality settings applied');
+
+      // Update UI to reflect actual values
+      if (msg.bitrate && this.elements.bitrateSlider) {
+        const mbps = Math.round(msg.bitrate / 1000);
+        this.elements.bitrateSlider.value = mbps;
+        if (this.elements.bitrateValue) {
+          this.elements.bitrateValue.textContent = mbps;
+        }
+      }
+      if (msg.framerate && this.elements.framerateSelect) {
+        this.elements.framerateSelect.value = msg.framerate;
+      }
+      if (msg.width && msg.height && this.elements.resolutionSelect) {
+        // Map dimensions back to resolution option
+        if (msg.height <= 720) this.elements.resolutionSelect.value = '720';
+        else if (msg.height <= 1080) this.elements.resolutionSelect.value = '1080';
+        else if (msg.height <= 1440) this.elements.resolutionSelect.value = '1440';
+        else this.elements.resolutionSelect.value = '4k';
+      }
+    } else {
+      this.showNotification(msg.error || 'Failed to apply quality settings');
+    }
   }
 
   // ============== Lifecycle ==============

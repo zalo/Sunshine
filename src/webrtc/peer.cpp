@@ -386,7 +386,18 @@ namespace webrtc {
     }
 
     try {
-      auto channel = pc_->createDataChannel(label);
+      // Configure data channel options
+      rtc::DataChannelInit init;
+
+      if (label == "input") {
+        // Input channel uses unreliable/unordered for lowest latency
+        // Old packets are automatically discarded since we only care about latest state
+        init.reliability.maxRetransmits = 0;  // No retransmissions (unreliable)
+        init.reliability.unordered = true;  // Unordered delivery
+        BOOST_LOG(debug) << "Peer " << id_ << " creating unreliable/unordered data channel: " << label;
+      }
+
+      auto channel = pc_->createDataChannel(label, init);
       handle_data_channel(channel);
       return true;
     }

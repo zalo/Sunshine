@@ -31,6 +31,7 @@ namespace webrtc {
    *   { "type": "ice", "candidate": "...", "mid": "..." }
    *   { "type": "set_guest_keyboard", "peer_id": "...", "enabled": true }
    *   { "type": "set_guest_mouse", "peer_id": "...", "enabled": true }
+   *   { "type": "set_quality", "bitrate": 10000, "framerate": 60, "width": 1920, "height": 1080 }
    *
    * Server -> Client:
    *   { "type": "room_created", "room_code": "A3K9B2", "player_slot": 1 }
@@ -46,6 +47,7 @@ namespace webrtc {
    *   { "type": "ice", "candidate": "...", "mid": "..." }
    *   { "type": "error", "message": "...", "code": "..." }
    *   { "type": "stream_ready" }  // Video/audio tracks ready
+   *   { "type": "quality_updated", "success": true, "bitrate": 10000, ... }
    */
   class SignalingServer {
   public:
@@ -153,6 +155,9 @@ namespace webrtc {
 
     void
     handle_set_guest_mouse(const std::string &peer_id, const std::string &target_peer_id, bool enabled);
+
+    void
+    handle_set_quality(const std::string &peer_id, int bitrate, int framerate, int width, int height);
 
     // Helper to send error response
     void

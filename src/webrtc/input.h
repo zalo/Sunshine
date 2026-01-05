@@ -17,15 +17,16 @@ namespace webrtc {
 
   /**
    * @brief Input event types from browser clients.
+   * These MUST match the type codes sent by play.js
    */
   enum class InputType : uint8_t {
-    GAMEPAD_STATE = 0x01,
-    GAMEPAD_RUMBLE = 0x02,
-    KEYBOARD_KEY = 0x10,
-    MOUSE_MOVE = 0x20,
-    MOUSE_BUTTON = 0x21,
-    MOUSE_SCROLL = 0x22,
-    TOUCH = 0x30
+    GAMEPAD_STATE = 0x01,   // Gamepad button/axis state
+    KEYBOARD_KEY = 0x02,    // Keyboard key press/release
+    MOUSE_MOVE = 0x03,      // Mouse movement (relative)
+    MOUSE_BUTTON = 0x04,    // Mouse button press/release
+    MOUSE_SCROLL = 0x05,    // Mouse scroll wheel
+    TOUCH = 0x06,           // Touch input (future)
+    GAMEPAD_RUMBLE = 0x10   // Rumble feedback (server -> client)
   };
 
   /**

@@ -568,6 +568,63 @@
         .hidden {
             display: none !important;
         }
+
+        /* Quality settings */
+        .quality-setting {
+            margin-bottom: 1rem;
+        }
+
+        .quality-setting label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .quality-slider {
+            width: 100%;
+            height: 6px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: var(--bg-tertiary);
+            border-radius: 3px;
+            outline: none;
+        }
+
+        .quality-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+        }
+
+        .quality-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            border: none;
+        }
+
+        .quality-select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+
+        .quality-select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
     </style>
 </head>
 <body>
@@ -657,6 +714,34 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
+            </div>
+
+            <!-- Stream Quality Settings (host only) -->
+            <div class="sidebar-section" id="qualityPanel" style="display: none;">
+                <h3>Stream Quality</h3>
+                <div class="quality-setting">
+                    <label for="bitrateSlider">Bitrate: <span id="bitrateValue">10</span> Mbps</label>
+                    <input type="range" id="bitrateSlider" min="1" max="50" value="10" class="quality-slider">
+                </div>
+                <div class="quality-setting">
+                    <label for="framerateSelect">Framerate</label>
+                    <select id="framerateSelect" class="quality-select">
+                        <option value="30">30 FPS</option>
+                        <option value="60" selected>60 FPS</option>
+                        <option value="120">120 FPS</option>
+                        <option value="144">144 FPS</option>
+                    </select>
+                </div>
+                <div class="quality-setting">
+                    <label for="resolutionSelect">Resolution</label>
+                    <select id="resolutionSelect" class="quality-select">
+                        <option value="720">720p (1280x720)</option>
+                        <option value="1080" selected>1080p (1920x1080)</option>
+                        <option value="1440">1440p (2560x1440)</option>
+                        <option value="4k">4K (3840x2160)</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary" id="applyQualityBtn" style="width: 100%; margin-top: 0.5rem;">Apply Settings</button>
             </div>
 
             <!-- Stats Section -->

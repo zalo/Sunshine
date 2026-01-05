@@ -22,10 +22,13 @@ namespace webrtc {
   class WebSocketServerImpl {
   public:
     WebSocketServerImpl() :
+        alive_(std::make_shared<std::atomic<bool>>(true)),
         running_(false),
         next_conn_id_(1) {}
 
     ~WebSocketServerImpl() {
+      // Mark as dead FIRST so callbacks know not to access this
+      alive_->store(false);
       stop();
     }
 
@@ -48,7 +51,10 @@ namespace webrtc {
 
         server_ = std::make_unique<rtc::WebSocketServer>(config);
 
-        server_->onClient([this](std::shared_ptr<rtc::WebSocket> ws) {
+        // Capture alive_ so we can safely check if server still exists
+        auto alive = alive_;
+        server_->onClient([this, alive](std::shared_ptr<rtc::WebSocket> ws) {
+          if (!alive->load()) return;
           on_client(ws);
         });
 
@@ -131,14 +137,17 @@ namespace webrtc {
     }
 
     void set_message_callback(message_callback_t callback) {
+      std::lock_guard<std::mutex> lock(callbacks_mutex_);
       message_callback_ = std::move(callback);
     }
 
     void set_connect_callback(connection_callback_t callback) {
+      std::lock_guard<std::mutex> lock(callbacks_mutex_);
       connect_callback_ = std::move(callback);
     }
 
     void set_disconnect_callback(connection_callback_t callback) {
+      std::lock_guard<std::mutex> lock(callbacks_mutex_);
       disconnect_callback_ = std::move(callback);
     }
 
@@ -156,50 +165,93 @@ namespace webrtc {
         connections_[conn_id] = ws;
       }
 
-      ws->onOpen([this, conn_id]() {
+      // Capture alive_ by value (shared_ptr copy) so callbacks can safely check
+      // if the server is still valid before accessing 'this'
+      auto alive = alive_;
+
+      ws->onOpen([this, alive, conn_id]() {
+        if (!alive->load() || !running_.load()) return;
         BOOST_LOG(debug) << "WebSocket connection " << conn_id << " opened";
-        if (connect_callback_) {
-          connect_callback_(conn_id);
+        connection_callback_t callback;
+        {
+          std::lock_guard<std::mutex> lock(callbacks_mutex_);
+          callback = connect_callback_;
+        }
+        if (callback) {
+          callback(conn_id);
         }
       });
 
-      ws->onClosed([this, conn_id]() {
+      ws->onClosed([this, alive, conn_id]() {
+        // Check alive BEFORE accessing any member of 'this'
+        if (!alive->load()) {
+          BOOST_LOG(debug) << "WebSocket onClosed ignored - server destroyed";
+          return;
+        }
         BOOST_LOG(debug) << "WebSocket connection " << conn_id << " closed";
+        // Guard against callbacks firing during/after shutdown
+        if (!running_.load()) {
+          BOOST_LOG(debug) << "WebSocket onClosed ignored - server not running";
+          return;
+        }
+        // Capture callback FIRST before erasing connection (which may trigger destruction)
+        connection_callback_t callback;
+        {
+          std::lock_guard<std::mutex> lock(callbacks_mutex_);
+          callback = disconnect_callback_;
+        }
+        // Now safe to erase connection
         {
           std::lock_guard<std::mutex> lock(connections_mutex_);
           connections_.erase(conn_id);
         }
-        if (disconnect_callback_) {
-          disconnect_callback_(conn_id);
+        // Call callback after connection is cleaned up
+        if (callback) {
+          callback(conn_id);
         }
       });
 
-      ws->onError([this, conn_id](const std::string &err_msg) {
+      ws->onError([this, alive, conn_id](const std::string &err_msg) {
+        if (!alive->load() || !running_.load()) return;
         BOOST_LOG(error) << "WebSocket connection " << conn_id << " error: " << err_msg;
         {
           std::lock_guard<std::mutex> lock(connections_mutex_);
           connections_.erase(conn_id);
         }
-        if (disconnect_callback_) {
-          disconnect_callback_(conn_id);
+        connection_callback_t callback;
+        {
+          std::lock_guard<std::mutex> lock(callbacks_mutex_);
+          callback = disconnect_callback_;
+        }
+        if (callback) {
+          callback(conn_id);
         }
       });
 
-      ws->onMessage([this, conn_id](rtc::message_variant data) {
+      ws->onMessage([this, alive, conn_id](rtc::message_variant data) {
+        if (!alive->load() || !running_.load()) return;
         if (std::holds_alternative<std::string>(data)) {
           const auto &message = std::get<std::string>(data);
-          if (message_callback_) {
-            message_callback_(conn_id, message);
+          message_callback_t callback;
+          {
+            std::lock_guard<std::mutex> lock(callbacks_mutex_);
+            callback = message_callback_;
+          }
+          if (callback) {
+            callback(conn_id, message);
           }
         }
       });
     }
 
+    // Shared flag to detect if this object is still alive - checked by callbacks
+    std::shared_ptr<std::atomic<bool>> alive_;
     std::unique_ptr<rtc::WebSocketServer> server_;
     std::atomic<bool> running_;
     std::atomic<ws_connection_id> next_conn_id_;
 
     mutable std::mutex connections_mutex_;
+    mutable std::mutex callbacks_mutex_;
     std::unordered_map<ws_connection_id, std::shared_ptr<rtc::WebSocket>> connections_;
 
     message_callback_t message_callback_;

@@ -29,6 +29,7 @@ extern "C" {
 #include "platform/common.h"
 #include "sync.h"
 #include "video.h"
+#include "webrtc/video_sender.h"
 
 #ifdef _WIN32
 extern "C" {
@@ -3022,6 +3023,10 @@ namespace video {
     BOOST_LOG(info) << "Starting WebRTC capture";
     webrtc_capture_running.store(true);
     webrtc_capture_active.store(true);
+
+    // Start video sender BEFORE capture thread so it's ready to receive packets
+    webrtc::VideoSender::instance().start();
+
     webrtc_capture_thread = std::make_unique<std::thread>(webrtc_capture_loop);
 
     return true;
@@ -3033,6 +3038,10 @@ namespace video {
     }
 
     BOOST_LOG(info) << "Stopping WebRTC capture";
+
+    // Stop video sender FIRST to stop it from trying to access peers
+    webrtc::VideoSender::instance().stop();
+
     webrtc_capture_running.store(false);
 
     if (webrtc_capture_thread && webrtc_capture_thread->joinable()) {

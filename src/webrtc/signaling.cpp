@@ -5,8 +5,10 @@
 
 #include "signaling.h"
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
+#include "input.h"
 #include "peer.h"
 #include "room.h"
 #include "video_sender.h"
@@ -238,6 +240,10 @@ namespace webrtc {
       else if (type == "set_guest_mouse") {
         handle_set_guest_mouse(peer_id, msg.value("peer_id", ""), msg.value("enabled", false));
       }
+      else if (type == "set_quality") {
+        handle_set_quality(peer_id, msg.value("bitrate", 10000), msg.value("framerate", 60),
+          msg.value("width", 1920), msg.value("height", 1080));
+      }
       else {
         send_error(peer_id, "Unknown message type: " + type, "unknown_type");
       }
@@ -328,12 +334,20 @@ namespace webrtc {
     // Create data channels for input
     peer->create_data_channel("input");
 
+    // Register callback to handle incoming input from this peer
+    peer->on_data_channel_binary("input", [peer_id](const std::vector<std::byte> &data) {
+      InputHandler::instance().process_input(peer_id, data.data(), data.size());
+    });
+
     // Send room created response
     json response;
     response["type"] = "room_created";
     response["room_code"] = room->code();
+    response["peer_id"] = peer_id;
     response["player_slot"] = 1;
     response["is_host"] = true;
+    response["keyboard_enabled"] = true;  // Host always has keyboard access
+    response["mouse_enabled"] = true;     // Host always has mouse access
 
     send_to_peer(peer_id, response.dump());
 
@@ -408,13 +422,21 @@ namespace webrtc {
     peer->add_audio_track();
     peer->create_data_channel("input");
 
+    // Register callback to handle incoming input from this peer
+    peer->on_data_channel_binary("input", [peer_id](const std::vector<std::byte> &data) {
+      InputHandler::instance().process_input(peer_id, data.data(), data.size());
+    });
+
     // Send join response
     json response;
     response["type"] = "room_joined";
     response["room_code"] = room_code;
+    response["peer_id"] = peer_id;
     response["player_slot"] = 0;  // Spectator
     response["is_spectator"] = true;
     response["is_host"] = false;
+    response["keyboard_enabled"] = false;  // Spectators don't have keyboard access
+    response["mouse_enabled"] = false;     // Spectators don't have mouse access
     response["players"] = json::parse(build_players_json(room_code));
 
     send_to_peer(peer_id, response.dump());
@@ -444,6 +466,12 @@ namespace webrtc {
     std::string room_code = room->code();
     auto player = room->get_player(peer_id);
 
+    // Send confirmation to the leaving peer BEFORE we destroy anything
+    // This must happen first because send_to_peer needs the peer to still exist
+    json response;
+    response["type"] = "left_room";
+    send_to_peer(peer_id, response.dump());
+
     // Close peer connection FIRST to stop video transmission
     // This is important to prevent race conditions with VideoSender
     PeerManager::instance().remove_peer(peer_id);
@@ -462,6 +490,12 @@ namespace webrtc {
       }
 
       RoomManager::instance().remove_room(room_code);
+
+      // Stop video capture if this was the last room
+      if (RoomManager::instance().room_count() == 0) {
+        BOOST_LOG(info) << "Last WebRTC room closed, stopping video capture";
+        video::stop_webrtc_capture();
+      }
     }
     else if (player) {
       // Notify others
@@ -472,12 +506,6 @@ namespace webrtc {
 
       broadcast_to_room(room_code, msg.dump(), peer_id);
     }
-
-    // Send confirmation to the leaving peer
-    // Note: This may fail if peer already disconnected, but that's OK
-    json response;
-    response["type"] = "left_room";
-    send_to_peer(peer_id, response.dump());
   }
 
   void
@@ -690,6 +718,53 @@ namespace webrtc {
     msg["code"] = code;
 
     send_to_peer(peer_id, msg.dump());
+  }
+
+  void
+  SignalingServer::handle_set_quality(const std::string &peer_id, int bitrate, int framerate, int width, int height) {
+    auto room = RoomManager::instance().find_room_by_peer(peer_id);
+    if (!room) {
+      send_error(peer_id, "Not in a room", "not_in_room");
+      return;
+    }
+
+    // Only host can modify quality settings
+    if (!room->is_host(peer_id)) {
+      send_error(peer_id, "Only host can modify quality settings", "not_host");
+      return;
+    }
+
+    BOOST_LOG(info) << "Quality settings requested by " << peer_id << ": "
+                    << "bitrate=" << bitrate << "kbps, "
+                    << "framerate=" << framerate << "fps, "
+                    << "resolution=" << width << "x" << height;
+
+    // Clamp values to reasonable ranges
+    bitrate = std::clamp(bitrate, 1000, 150000);  // 1-150 Mbps in kbps
+    framerate = std::clamp(framerate, 30, 240);
+    width = std::clamp(width, 640, 7680);
+    height = std::clamp(height, 480, 4320);
+
+    // Update the config for new sessions
+    // Note: This modifies global config which will affect new encoder sessions
+    ::config::video.max_bitrate = bitrate;
+
+    // For live session changes, we would need to signal the encoder to reinitialize
+    // This is a placeholder - full implementation would require encoder restart logic
+    // For now, we acknowledge the settings but note they may require stream restart
+
+    json response;
+    response["type"] = "quality_updated";
+    response["success"] = true;
+    response["bitrate"] = bitrate;
+    response["framerate"] = framerate;
+    response["width"] = width;
+    response["height"] = height;
+    response["note"] = "Bitrate updated. Resolution/framerate changes may require stream restart.";
+
+    send_to_peer(peer_id, response.dump());
+
+    BOOST_LOG(info) << "Quality settings updated: bitrate=" << bitrate << "kbps";
   }
 
   std::string

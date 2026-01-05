@@ -33,47 +33,84 @@ namespace webrtc {
 
     InputType type = static_cast<InputType>(static_cast<uint8_t>(data[0]));
 
+    BOOST_LOG(debug) << "WebRTC input: received type=" << static_cast<int>(data[0])
+                     << " size=" << size << " from peer " << peer_id;
+
     switch (type) {
       case InputType::GAMEPAD_STATE: {
-        if (size >= sizeof(GamepadState) + 1) {
+        // Format: type(1) | gamepad_id(1) | buttons(2) | lt(1) | rt(1) | lx(2) | ly(2) | rx(2) | ry(2) = 14 bytes
+        if (size >= 14) {
           GamepadState state;
-          std::memcpy(&state, &data[1], sizeof(GamepadState));
+          state.gamepad_id = static_cast<uint8_t>(data[1]);
+          state.buttons = static_cast<uint8_t>(data[2]) | (static_cast<uint8_t>(data[3]) << 8);
+          state.left_trigger = static_cast<uint8_t>(data[4]);
+          state.right_trigger = static_cast<uint8_t>(data[5]);
+          state.left_stick_x = static_cast<int16_t>(static_cast<uint8_t>(data[6]) | (static_cast<uint8_t>(data[7]) << 8));
+          state.left_stick_y = static_cast<int16_t>(static_cast<uint8_t>(data[8]) | (static_cast<uint8_t>(data[9]) << 8));
+          state.right_stick_x = static_cast<int16_t>(static_cast<uint8_t>(data[10]) | (static_cast<uint8_t>(data[11]) << 8));
+          state.right_stick_y = static_cast<int16_t>(static_cast<uint8_t>(data[12]) | (static_cast<uint8_t>(data[13]) << 8));
           process_gamepad(peer_id, state);
         }
         break;
       }
 
       case InputType::KEYBOARD_KEY: {
-        if (size >= sizeof(KeyboardEvent) + 1) {
+        // Format: type(1) | key_code(2) | modifiers(1) | pressed(1) = 5 bytes
+        if (size >= 5) {
           KeyboardEvent event;
-          std::memcpy(&event, &data[1], sizeof(KeyboardEvent));
+          event.key_code = static_cast<uint8_t>(data[1]) | (static_cast<uint8_t>(data[2]) << 8);
+          event.modifiers = static_cast<uint8_t>(data[3]);
+          event.pressed = static_cast<uint8_t>(data[4]) != 0;
           process_keyboard(peer_id, event);
         }
         break;
       }
 
       case InputType::MOUSE_MOVE: {
-        if (size >= sizeof(MouseMoveEvent) + 1) {
+        // Format: type(1) | flags(1) | x(2) | y(2) = 6 bytes
+        // flags: 0x01 = absolute mode, 0x00 = relative mode
+        if (size >= 6) {
           MouseMoveEvent event;
-          std::memcpy(&event, &data[1], sizeof(MouseMoveEvent));
+          uint8_t flags = static_cast<uint8_t>(data[1]);
+          event.is_absolute = (flags & 0x01) != 0;
+
+          if (event.is_absolute) {
+            // Absolute mode: x/y are 0-65535 normalized coordinates
+            event.abs_x = static_cast<uint16_t>(static_cast<uint8_t>(data[2]) | (static_cast<uint8_t>(data[3]) << 8));
+            event.abs_y = static_cast<uint16_t>(static_cast<uint8_t>(data[4]) | (static_cast<uint8_t>(data[5]) << 8));
+            event.delta_x = 0;
+            event.delta_y = 0;
+          }
+          else {
+            // Relative mode: x/y are signed deltas
+            event.delta_x = static_cast<int16_t>(static_cast<uint8_t>(data[2]) | (static_cast<uint8_t>(data[3]) << 8));
+            event.delta_y = static_cast<int16_t>(static_cast<uint8_t>(data[4]) | (static_cast<uint8_t>(data[5]) << 8));
+            event.abs_x = 0;
+            event.abs_y = 0;
+          }
           process_mouse_move(peer_id, event);
         }
         break;
       }
 
       case InputType::MOUSE_BUTTON: {
-        if (size >= sizeof(MouseButtonEvent) + 1) {
+        // Format: type(1) | button(1) | pressed(1) = 3 bytes
+        if (size >= 3) {
           MouseButtonEvent event;
-          std::memcpy(&event, &data[1], sizeof(MouseButtonEvent));
+          event.button = static_cast<uint8_t>(data[1]);
+          event.pressed = static_cast<uint8_t>(data[2]) != 0;
           process_mouse_button(peer_id, event);
         }
         break;
       }
 
       case InputType::MOUSE_SCROLL: {
-        if (size >= sizeof(MouseScrollEvent) + 1) {
+        // Format: type(1) | reserved(1) | delta_x(2) | delta_y(2) = 6 bytes
+        if (size >= 6) {
           MouseScrollEvent event;
-          std::memcpy(&event, &data[1], sizeof(MouseScrollEvent));
+          event.delta_x = static_cast<int16_t>(static_cast<uint8_t>(data[2]) | (static_cast<uint8_t>(data[3]) << 8));
+          event.delta_y = static_cast<int16_t>(static_cast<uint8_t>(data[4]) | (static_cast<uint8_t>(data[5]) << 8));
+          event.high_resolution = true;
           process_mouse_scroll(peer_id, event);
         }
         break;
@@ -120,15 +157,20 @@ namespace webrtc {
     // Check if peer has keyboard permission
     auto room = RoomManager::instance().find_room_by_peer(peer_id);
     if (!room) {
+      BOOST_LOG(debug) << "WebRTC input: keyboard event from peer " << peer_id << " - no room found";
       return;
     }
 
     if (!room->can_use_keyboard(peer_id)) {
+      BOOST_LOG(debug) << "WebRTC input: keyboard event from peer " << peer_id << " - no permission";
       return;
     }
 
-    auto packet = build_keyboard_packet(event);
-    send_to_input_system(packet);
+    BOOST_LOG(debug) << "WebRTC input: keyboard key=" << event.key_code
+                     << " pressed=" << event.pressed << " from peer " << peer_id;
+
+    // Call Sunshine's input system directly
+    input::keyboard(event.key_code, !event.pressed);
   }
 
   void
@@ -142,8 +184,13 @@ namespace webrtc {
       return;
     }
 
-    auto packet = build_mouse_move_packet(event);
-    send_to_input_system(packet);
+    // Call Sunshine's input system directly
+    if (event.is_absolute) {
+      input::mouse_move_abs(event.abs_x, event.abs_y);
+    }
+    else {
+      input::mouse_move_rel(event.delta_x, event.delta_y);
+    }
   }
 
   void
@@ -157,8 +204,11 @@ namespace webrtc {
       return;
     }
 
-    auto packet = build_mouse_button_packet(event);
-    send_to_input_system(packet);
+    BOOST_LOG(debug) << "WebRTC input: mouse button=" << (int) event.button
+                     << " pressed=" << event.pressed << " from peer " << peer_id;
+
+    // Button mapping: browser (0=left, 1=middle, 2=right) -> Sunshine (1=left, 2=middle, 3=right)
+    input::mouse_button(event.button + 1, event.pressed);
   }
 
   void
@@ -172,8 +222,15 @@ namespace webrtc {
       return;
     }
 
-    auto packet = build_mouse_scroll_packet(event);
-    send_to_input_system(packet);
+    // Send vertical scroll
+    if (event.delta_y != 0) {
+      input::mouse_scroll(event.delta_y, false);
+    }
+
+    // Send horizontal scroll
+    if (event.delta_x != 0) {
+      input::mouse_scroll(event.delta_x, true);
+    }
   }
 
   void
