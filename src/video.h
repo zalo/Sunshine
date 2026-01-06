@@ -419,4 +419,12 @@ namespace video {
         return av_d2q((double) framerateX100 / 100.0f, 1 << 26);
     }
   }
+
+  // Encoder info API
+  std::string get_encoder_name();
+  bool get_encoder_h264_supported();
+  bool get_encoder_hevc_supported();
+  bool get_encoder_av1_supported();
+  bool get_encoder_hdr_supported();
+
 }  // namespace video

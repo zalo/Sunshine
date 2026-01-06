@@ -35,6 +35,7 @@
 #include "process.h"
 #include "utility.h"
 #include "uuid.h"
+#include "video.h"
 
 using namespace std::literals;
 
@@ -886,6 +887,26 @@ namespace confighttp {
   }
 
   /**
+   * @brief Get encoder information. This endpoint does not require authentication.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/encoder| GET| null}
+   */
+  void getEncoderInfo(resp_https_t response, req_https_t request) {
+    print_req(request);
+
+    nlohmann::json output_tree;
+    output_tree["status"] = true;
+    output_tree["encoder"] = video::get_encoder_name();
+    output_tree["h264"] = video::get_encoder_h264_supported();
+    output_tree["hevc"] = video::get_encoder_hevc_supported();
+    output_tree["av1"] = video::get_encoder_av1_supported();
+    output_tree["hdr"] = video::get_encoder_hdr_supported();
+    send_response(response, output_tree);
+  }
+
+  /**
    * @brief Get the locale setting. This endpoint does not require authentication.
    * @param response The HTTP response object.
    * @param request The HTTP request object.
@@ -1247,6 +1268,7 @@ namespace confighttp {
     server.resource["^/api/clients/unpair-all$"]["POST"] = unpairAll;
     server.resource["^/api/clients/list$"]["GET"] = getClients;
     server.resource["^/api/clients/unpair$"]["POST"] = unpair;
+    server.resource["^/api/encoder$"]["GET"] = getEncoderInfo;
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/images/sunshine.ico$"]["GET"] = getFaviconImage;

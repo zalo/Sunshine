@@ -3166,4 +3166,30 @@ namespace video {
     return platf::pix_fmt_e::unknown;
   }
 
+  std::string get_encoder_name() {
+    if (chosen_encoder) {
+      return std::string(chosen_encoder->name);
+    }
+    return "none";
+  }
+
+  bool get_encoder_h264_supported() {
+    return chosen_encoder && chosen_encoder->h264[encoder_t::PASSED];
+  }
+
+  bool get_encoder_hevc_supported() {
+    return chosen_encoder && chosen_encoder->hevc[encoder_t::PASSED];
+  }
+
+  bool get_encoder_av1_supported() {
+    return chosen_encoder && chosen_encoder->av1[encoder_t::PASSED];
+  }
+
+  bool get_encoder_hdr_supported() {
+    return chosen_encoder && (
+      chosen_encoder->h264[encoder_t::DYNAMIC_RANGE] ||
+      chosen_encoder->hevc[encoder_t::DYNAMIC_RANGE] ||
+      chosen_encoder->av1[encoder_t::DYNAMIC_RANGE]);
+  }
+
 }  // namespace video

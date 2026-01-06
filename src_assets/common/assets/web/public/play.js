@@ -116,6 +116,7 @@ class SunshineWebRTC {
       statsFps: document.getElementById('statsFps'),
       statsRtt: document.getElementById('statsRtt'),
       statsPacketLoss: document.getElementById('statsPacketLoss'),
+      statsEncoder: document.getElementById('statsEncoder'),
       gamepadIndicator: document.getElementById('gamepadIndicator'),
       fullscreenBtn: document.getElementById('fullscreenBtn'),
       keyboardBtn: document.getElementById('keyboardBtn'),
@@ -1194,6 +1195,22 @@ class SunshineWebRTC {
     }
     if (this.elements.keyboardBtn) {
       this.elements.keyboardBtn.classList.remove('hidden');
+    }
+    // Fetch encoder info
+    this.fetchEncoderInfo();
+  }
+
+  async fetchEncoderInfo() {
+    try {
+      const response = await fetch('/api/encoder');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.status && this.elements.statsEncoder) {
+          this.elements.statsEncoder.textContent = data.encoder || '--';
+        }
+      }
+    } catch (error) {
+      console.log('Could not fetch encoder info:', error);
     }
   }
 
