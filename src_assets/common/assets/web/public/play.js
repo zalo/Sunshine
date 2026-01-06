@@ -1303,6 +1303,40 @@ class SunshineWebRTC {
 
     // Add initial log entry
     addLogEntry('log', ['Console log viewer initialized']);
+
+    // Fetch server logs periodically
+    this.fetchServerLogs(addLogEntry);
+    setInterval(() => this.fetchServerLogs(addLogEntry), 5000);
+  }
+
+  async fetchServerLogs(addLogEntry) {
+    try {
+      const response = await fetch('/api/server-logs');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.logs && Array.isArray(data.logs)) {
+          // Track which logs we've already shown
+          if (!this._lastServerLogTime) {
+            this._lastServerLogTime = null;
+          }
+
+          for (const log of data.logs) {
+            // Skip if we've already shown this log
+            if (this._lastServerLogTime && log.time <= this._lastServerLogTime) {
+              continue;
+            }
+
+            // Map server log level to console level
+            const level = log.level === 'error' ? 'error' :
+                          log.level === 'warn' ? 'warn' : 'log';
+            addLogEntry(level, [`[SERVER] ${log.message}`]);
+            this._lastServerLogTime = log.time;
+          }
+        }
+      }
+    } catch (error) {
+      // Silently ignore - server logs endpoint may not be available
+    }
   }
 
   escapeHtml(text) {

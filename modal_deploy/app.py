@@ -193,19 +193,34 @@ def start_sunshine():
 
     # Debug: Check GPU availability
     print("=== Checking GPU availability ===")
+    add_server_log("info", "=== Checking GPU availability ===")
     gpu_check = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
     if gpu_check.returncode == 0:
         print("nvidia-smi output:")
         print(gpu_check.stdout[:2000])  # Print first 2000 chars
+        # Parse GPU name from nvidia-smi
+        for line in gpu_check.stdout.split('\n'):
+            if 'NVIDIA' in line and ('L4' in line or 'Tesla' in line or 'RTX' in line or 'GTX' in line):
+                add_server_log("info", f"GPU: {line.strip()}")
+                break
+        else:
+            add_server_log("info", "GPU detected via nvidia-smi")
     else:
         print(f"nvidia-smi failed: {gpu_check.stderr}")
+        add_server_log("error", f"nvidia-smi failed: {gpu_check.stderr}")
 
     # Debug: Check for NVENC libraries
     import glob
     nvenc_libs = glob.glob("/usr/lib/x86_64-linux-gnu/libnvidia-encode*")
     cuda_libs = glob.glob("/usr/lib/x86_64-linux-gnu/libcuda*")
+    # Also check other common locations
+    nvenc_libs += glob.glob("/usr/local/nvidia/lib64/libnvidia-encode*")
+    cuda_libs += glob.glob("/usr/local/nvidia/lib64/libcuda*")
+    cuda_libs += glob.glob("/usr/local/cuda/lib64/libcuda*")
     print(f"NVENC libraries found: {nvenc_libs}")
     print(f"CUDA libraries found: {cuda_libs}")
+    add_server_log("info", f"NVENC libs: {nvenc_libs if nvenc_libs else 'NONE FOUND'}")
+    add_server_log("info", f"CUDA libs: {cuda_libs if cuda_libs else 'NONE FOUND'}")
 
     # Set up library paths for the pre-built binary
     # All needed libs are in lib_deps (Boost is statically linked)
@@ -286,8 +301,18 @@ file_apps = /opt/sunshine-web
 
         if output_lines:
             print("=== Sunshine startup output (encoder probing) ===")
+            add_server_log("info", "=== Sunshine encoder probing ===")
             for line in output_lines:
                 print(line, end='')
+                line_stripped = line.strip()
+                if line_stripped:
+                    # Determine log level based on content
+                    if 'error' in line_stripped.lower() or 'failed' in line_stripped.lower():
+                        add_server_log("error", line_stripped)
+                    elif 'warning' in line_stripped.lower() or 'warn' in line_stripped.lower():
+                        add_server_log("warn", line_stripped)
+                    elif 'encoder' in line_stripped.lower() or 'nvenc' in line_stripped.lower() or 'vaapi' in line_stripped.lower():
+                        add_server_log("info", line_stripped)
             print("=== End of startup output ===")
 
     time.sleep(2)
@@ -308,9 +333,15 @@ def create_proxy_app():
     from fastapi import FastAPI, WebSocket, Request, Response
     from starlette.websockets import WebSocketDisconnect
     import logging
+    from collections import deque
+    import threading
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
+
+    # Server log buffer (shared across requests)
+    server_logs = deque(maxlen=200)
+    logs_lock = threading.Lock()
 
     # Internal Sunshine server configuration
     SUNSHINE_HTTP_HOST = "127.0.0.1"
@@ -379,6 +410,14 @@ def create_proxy_app():
         """Health check endpoint."""
         return {"status": "healthy", "service": "sunshine-proxy"}
 
+    @web_app.get("/api/server-logs")
+    async def get_server_logs():
+        """Get server-side logs (Sunshine, GPU info, etc.)."""
+        global _server_logs, _server_logs_lock
+        with _server_logs_lock:
+            logs = list(_server_logs)
+        return {"logs": logs}
+
     @web_app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
     async def http_proxy(request: Request, path: str):
         """Proxy HTTP requests to internal HTTPS server."""
@@ -430,6 +469,22 @@ def create_proxy_app():
 _xvfb_started = False
 _desktop_started = False
 _sunshine_proc = None
+
+# Global server logs buffer
+from collections import deque
+import threading
+_server_logs = deque(maxlen=200)
+_server_logs_lock = threading.Lock()
+
+def add_server_log(level, message):
+    """Add a log entry to the server logs buffer."""
+    import datetime
+    with _server_logs_lock:
+        _server_logs.append({
+            "time": datetime.datetime.now().isoformat(),
+            "level": level,
+            "message": message
+        })
 
 
 @app.function(
