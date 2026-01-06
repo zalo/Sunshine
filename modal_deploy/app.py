@@ -3,7 +3,7 @@ Modal Deployment for Sunshine WebRTC Streaming Server
 
 This deploys a pre-built Sunshine binary on Modal with:
 - GPU support for hardware video encoding (NVENC)
-- Virtual display (Xvfb) for headless operation
+- GPU-accelerated display (Xorg with NVIDIA driver, Xvfb fallback)
 - Single-port HTTP/WebSocket via FastAPI proxy
 - Auto-scaling based on demand
 
@@ -35,10 +35,12 @@ base_image = (
         # Runtime dependencies for Sunshine
         "libssl3", "libcurl4", "libminiupnpc17",
         "libopus0", "libpulse0",
-        # X11 and display
-        "xvfb", "x11-utils", "libx11-6", "libxcb1",
+        # X11 and display (Xorg with NVIDIA for GPU-accelerated rendering)
+        "xserver-xorg-core", "xserver-xorg-video-dummy",
+        "x11-utils", "libx11-6", "libxcb1",
         "libxfixes3", "libxrandr2", "libxtst6",
         "libxcb-shm0", "libxcb-xfixes0",
+        "xvfb",  # Fallback if NVIDIA Xorg fails
         # Video encoding
         "libva2", "libva-drm2", "libva-x11-2",
         "libdrm2", "libgbm1",
@@ -112,15 +114,89 @@ sunshine_volume = modal.Volume.from_name("sunshine-data", create_if_missing=True
 # Runtime Functions
 # =============================================================================
 
-def start_xvfb():
-    """Start Xvfb virtual display."""
+def start_display():
+    """Start X display with GPU acceleration (NVIDIA) or fallback to Xvfb."""
+
+    # Create xorg.conf for NVIDIA headless rendering
+    xorg_conf = """
+Section "ServerLayout"
+    Identifier     "Layout0"
+    Screen      0  "Screen0"
+EndSection
+
+Section "Device"
+    Identifier     "Device0"
+    Driver         "nvidia"
+    VendorName     "NVIDIA Corporation"
+    Option         "AllowEmptyInitialConfiguration" "true"
+    Option         "UseDisplayDevice" "none"
+EndSection
+
+Section "Screen"
+    Identifier     "Screen0"
+    Device         "Device0"
+    DefaultDepth    24
+    Option         "AllowEmptyInitialConfiguration" "true"
+    Option         "UseDisplayDevice" "none"
+    SubSection     "Display"
+        Depth       24
+        Virtual     1920 1080
+    EndSubSection
+EndSection
+
+Section "ServerFlags"
+    Option "BlankTime" "0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime" "0"
+EndSection
+"""
+
+    os.makedirs("/etc/X11", exist_ok=True)
+    with open("/etc/X11/xorg.conf", "w") as f:
+        f.write(xorg_conf)
+
+    # Try NVIDIA Xorg first
+    try:
+        add_server_log("info", "Attempting to start Xorg with NVIDIA driver...")
+
+        # Start Xorg
+        xorg_proc = subprocess.Popen(
+            ["Xorg", ":99", "-config", "/etc/X11/xorg.conf", "-noreset", "+extension", "GLX"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        time.sleep(3)
+
+        # Check if Xorg started successfully
+        if xorg_proc.poll() is None:
+            # Verify display works
+            env = os.environ.copy()
+            env["DISPLAY"] = ":99"
+            result = subprocess.run(["xdpyinfo"], env=env, capture_output=True, timeout=5)
+            if result.returncode == 0:
+                add_server_log("info", "Xorg with NVIDIA GPU acceleration started successfully!")
+                print("Xorg with NVIDIA started on display :99 (GPU-accelerated)")
+                return True
+
+        # If we get here, Xorg failed
+        xorg_proc.terminate()
+        stderr = xorg_proc.stderr.read().decode() if xorg_proc.stderr else ""
+        add_server_log("warn", f"Xorg failed: {stderr[:200]}")
+
+    except Exception as e:
+        add_server_log("warn", f"Xorg error: {str(e)}")
+
+    # Fallback to Xvfb (software rendering)
+    add_server_log("info", "Falling back to Xvfb (software rendering)")
     subprocess.Popen(
         ["Xvfb", ":99", "-screen", "0", "1920x1080x24"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL
     )
     time.sleep(2)
-    print("Xvfb started on display :99")
+    print("Xvfb started on display :99 (software rendering)")
+    return False
 
 
 def start_desktop():
@@ -468,7 +544,7 @@ def create_proxy_app():
 
 
 # Global process handles
-_xvfb_started = False
+_display_started = False
 _desktop_started = False
 _sunshine_proc = None
 
@@ -503,17 +579,17 @@ def sunshine_server():
     Main Sunshine server entry point.
 
     Starts:
-    1. Xvfb virtual display
+    1. X display (NVIDIA GPU-accelerated Xorg, or Xvfb fallback)
     2. XFCE desktop environment with terminal
     3. Sunshine streaming server (internal ports 47990, 47991)
     4. FastAPI proxy (exposed via ASGI)
     """
-    global _xvfb_started, _desktop_started, _sunshine_proc
+    global _display_started, _desktop_started, _sunshine_proc
 
     # Start services on first request
-    if not _xvfb_started:
-        start_xvfb()
-        _xvfb_started = True
+    if not _display_started:
+        start_display()
+        _display_started = True
 
     if not _desktop_started:
         start_desktop()
