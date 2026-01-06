@@ -191,6 +191,22 @@ def start_sunshine():
     """Start the Sunshine server."""
     build_dir = "/opt/sunshine-build"
 
+    # Debug: Check GPU availability
+    print("=== Checking GPU availability ===")
+    gpu_check = subprocess.run(["nvidia-smi"], capture_output=True, text=True)
+    if gpu_check.returncode == 0:
+        print("nvidia-smi output:")
+        print(gpu_check.stdout[:2000])  # Print first 2000 chars
+    else:
+        print(f"nvidia-smi failed: {gpu_check.stderr}")
+
+    # Debug: Check for NVENC libraries
+    import glob
+    nvenc_libs = glob.glob("/usr/lib/x86_64-linux-gnu/libnvidia-encode*")
+    cuda_libs = glob.glob("/usr/lib/x86_64-linux-gnu/libcuda*")
+    print(f"NVENC libraries found: {nvenc_libs}")
+    print(f"CUDA libraries found: {cuda_libs}")
+
     # Set up library paths for the pre-built binary
     # All needed libs are in lib_deps (Boost is statically linked)
     lib_paths = [f"{build_dir}/lib_deps"]
@@ -226,7 +242,13 @@ file_apps = /opt/sunshine-web
     env["HOME"] = "/data"
     env["XDG_CONFIG_HOME"] = "/data"
     env["DISPLAY"] = ":99"
-    env["LD_LIBRARY_PATH"] = ":".join(lib_paths) + ":" + env.get("LD_LIBRARY_PATH", "")
+    # Add NVIDIA library paths for CUDA/NVENC
+    nvidia_lib_paths = [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/local/cuda/lib64",
+        "/usr/local/nvidia/lib64",
+    ]
+    env["LD_LIBRARY_PATH"] = ":".join(lib_paths + nvidia_lib_paths) + ":" + env.get("LD_LIBRARY_PATH", "")
 
     # Run from build directory so relative paths (./assets) work
     sunshine_bin = "./sunshine"
@@ -241,8 +263,34 @@ file_apps = /opt/sunshine-web
         stderr=subprocess.STDOUT
     )
 
-    # Wait for startup and check logs
-    time.sleep(5)
+    # Wait for startup and check logs (capture encoder probing output)
+    time.sleep(3)
+
+    # Read initial output to see encoder probing
+    import select
+    if proc.stdout:
+        # Read available output without blocking
+        import io
+        output_lines = []
+        while True:
+            # Check if there's data available
+            readable, _, _ = select.select([proc.stdout], [], [], 0.1)
+            if not readable:
+                break
+            line = proc.stdout.readline()
+            if not line:
+                break
+            output_lines.append(line.decode())
+            if len(output_lines) > 100:  # Limit to first 100 lines
+                break
+
+        if output_lines:
+            print("=== Sunshine startup output (encoder probing) ===")
+            for line in output_lines:
+                print(line, end='')
+            print("=== End of startup output ===")
+
+    time.sleep(2)
 
     if proc.poll() is not None:
         output = proc.stdout.read().decode() if proc.stdout else "No output"

@@ -124,8 +124,12 @@ class SunshineWebRTC {
       leaveBtn: document.getElementById('leaveBtn'),
       connectionStatus: document.getElementById('connectionStatus'),
       allowKeyboard: document.getElementById('allowKeyboard'),
-      allowMouse: document.getElementById('allowMouse')
+      allowMouse: document.getElementById('allowMouse'),
+      consoleLogContainer: document.getElementById('consoleLogContainer')
     };
+
+    // Set up console log capture early to catch all logs
+    this.setupConsoleCapture();
 
     this.bindEvents();
     this.loadSavedName();
@@ -1212,6 +1216,99 @@ class SunshineWebRTC {
     } catch (error) {
       console.log('Could not fetch encoder info:', error);
     }
+  }
+
+  setupConsoleCapture() {
+    const container = this.elements.consoleLogContainer;
+    if (!container) return;
+
+    // Store original console methods
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+
+    // Max log entries to keep
+    const MAX_LOGS = 100;
+
+    const addLogEntry = (level, args) => {
+      // Format the message
+      const message = args.map(arg => {
+        if (typeof arg === 'object') {
+          try {
+            return JSON.stringify(arg, null, 2);
+          } catch (e) {
+            return String(arg);
+          }
+        }
+        return String(arg);
+      }).join(' ');
+
+      // Create log entry element
+      const entry = document.createElement('div');
+      entry.style.marginBottom = '2px';
+      entry.style.wordBreak = 'break-word';
+
+      // Timestamp
+      const time = new Date().toLocaleTimeString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+
+      // Color based on level
+      const colors = {
+        log: 'var(--text-secondary, #999)',
+        warn: '#f5a623',
+        error: '#e74c3c'
+      };
+
+      entry.innerHTML = `<span style="color: #666">[${time}]</span> <span style="color: ${colors[level]}">${this.escapeHtml(message)}</span>`;
+
+      container.appendChild(entry);
+
+      // Limit entries
+      while (container.children.length > MAX_LOGS) {
+        container.removeChild(container.firstChild);
+      }
+
+      // Auto-scroll to bottom
+      container.scrollTop = container.scrollHeight;
+    };
+
+    // Override console methods
+    console.log = (...args) => {
+      originalLog.apply(console, args);
+      addLogEntry('log', args);
+    };
+
+    console.warn = (...args) => {
+      originalWarn.apply(console, args);
+      addLogEntry('warn', args);
+    };
+
+    console.error = (...args) => {
+      originalError.apply(console, args);
+      addLogEntry('error', args);
+    };
+
+    // Also capture uncaught errors
+    window.addEventListener('error', (event) => {
+      addLogEntry('error', [`Uncaught: ${event.message} at ${event.filename}:${event.lineno}`]);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      addLogEntry('error', [`Unhandled Promise: ${event.reason}`]);
+    });
+
+    // Add initial log entry
+    addLogEntry('log', ['Console log viewer initialized']);
+  }
+
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   updateRoomUI() {
