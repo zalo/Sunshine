@@ -21,6 +21,8 @@ import asyncio
 # Define the Modal app
 app = modal.App("sunshine-webrtc")
 
+# Cache buster: v2 - console log viewer
+
 # =============================================================================
 # LAYER 1: Ubuntu 24.04 base with runtime dependencies and desktop environment
 # Modal provides NVIDIA drivers on GPU instances, Sunshine will auto-detect NVENC
@@ -229,11 +231,10 @@ def start_sunshine():
     # Create data directory
     os.makedirs("/data/sunshine", exist_ok=True)
 
-    # Create default config if not exists
+    # Always recreate config to ensure latest settings (especially encoder auto-detect)
     config_path = "/data/sunshine/sunshine.conf"
-    if not os.path.exists(config_path):
-        with open(config_path, "w") as f:
-            f.write("""# Sunshine Configuration
+    with open(config_path, "w") as f:
+        f.write("""# Sunshine Configuration
 sunshine_name = Modal Sunshine
 port = 47989
 address_family = ipv4
@@ -242,8 +243,8 @@ address_family = ipv4
 webrtc_enabled = true
 webrtc_stun_server = stun:stun.l.google.com:19302
 
-# Encoder settings - try NVENC first, fall back to software
-# Comment out encoder line to let Sunshine auto-detect
+# Encoder settings - auto-detect (NVENC if available, otherwise software)
+# Do NOT set encoder = software here, let Sunshine probe for best encoder
 
 # Logging
 min_log_level = info
@@ -251,6 +252,7 @@ min_log_level = info
 # Web assets path
 file_apps = /opt/sunshine-web
 """)
+    add_server_log("info", "Config file created/updated (encoder auto-detect enabled)")
 
     # Start Sunshine with library paths
     env = os.environ.copy()
