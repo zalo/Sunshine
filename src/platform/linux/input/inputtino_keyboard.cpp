@@ -20,127 +20,119 @@ using namespace std::literals;
 
 namespace platf::keyboard {
 
-  // xdotool helper function
-  static void xdotool_cmd(const std::vector<std::string> &args) {
-    std::string cmd = "xdotool";
-    for (const auto &arg : args) {
-      cmd += " " + arg;
-    }
-    cmd += " 2>/dev/null";
-    std::system(cmd.c_str());
-  }
-
-  // Map Windows virtual key codes to xdotool key names
-  static std::string vk_to_xdotool(uint16_t vk) {
+#ifdef SUNSHINE_BUILD_X11
+  // Map Windows virtual key codes to X11 keysyms
+  static KeySym vk_to_keysym(uint16_t vk) {
     switch (vk) {
-      case 0x08: return "BackSpace";
-      case 0x09: return "Tab";
-      case 0x0D: return "Return";
-      case 0x10: return "Shift_L";
-      case 0x11: return "Control_L";
-      case 0x12: return "Alt_L";
-      case 0x13: return "Pause";
-      case 0x14: return "Caps_Lock";
-      case 0x1B: return "Escape";
-      case 0x20: return "space";
-      case 0x21: return "Page_Up";
-      case 0x22: return "Page_Down";
-      case 0x23: return "End";
-      case 0x24: return "Home";
-      case 0x25: return "Left";
-      case 0x26: return "Up";
-      case 0x27: return "Right";
-      case 0x28: return "Down";
-      case 0x2C: return "Print";
-      case 0x2D: return "Insert";
-      case 0x2E: return "Delete";
-      case 0x30: return "0";
-      case 0x31: return "1";
-      case 0x32: return "2";
-      case 0x33: return "3";
-      case 0x34: return "4";
-      case 0x35: return "5";
-      case 0x36: return "6";
-      case 0x37: return "7";
-      case 0x38: return "8";
-      case 0x39: return "9";
-      case 0x41: return "a";
-      case 0x42: return "b";
-      case 0x43: return "c";
-      case 0x44: return "d";
-      case 0x45: return "e";
-      case 0x46: return "f";
-      case 0x47: return "g";
-      case 0x48: return "h";
-      case 0x49: return "i";
-      case 0x4A: return "j";
-      case 0x4B: return "k";
-      case 0x4C: return "l";
-      case 0x4D: return "m";
-      case 0x4E: return "n";
-      case 0x4F: return "o";
-      case 0x50: return "p";
-      case 0x51: return "q";
-      case 0x52: return "r";
-      case 0x53: return "s";
-      case 0x54: return "t";
-      case 0x55: return "u";
-      case 0x56: return "v";
-      case 0x57: return "w";
-      case 0x58: return "x";
-      case 0x59: return "y";
-      case 0x5A: return "z";
-      case 0x5B: return "Super_L";
-      case 0x5C: return "Super_R";
-      case 0x60: return "KP_0";
-      case 0x61: return "KP_1";
-      case 0x62: return "KP_2";
-      case 0x63: return "KP_3";
-      case 0x64: return "KP_4";
-      case 0x65: return "KP_5";
-      case 0x66: return "KP_6";
-      case 0x67: return "KP_7";
-      case 0x68: return "KP_8";
-      case 0x69: return "KP_9";
-      case 0x6A: return "KP_Multiply";
-      case 0x6B: return "KP_Add";
-      case 0x6D: return "KP_Subtract";
-      case 0x6E: return "KP_Decimal";
-      case 0x6F: return "KP_Divide";
-      case 0x70: return "F1";
-      case 0x71: return "F2";
-      case 0x72: return "F3";
-      case 0x73: return "F4";
-      case 0x74: return "F5";
-      case 0x75: return "F6";
-      case 0x76: return "F7";
-      case 0x77: return "F8";
-      case 0x78: return "F9";
-      case 0x79: return "F10";
-      case 0x7A: return "F11";
-      case 0x7B: return "F12";
-      case 0x90: return "Num_Lock";
-      case 0x91: return "Scroll_Lock";
-      case 0xA0: return "Shift_L";
-      case 0xA1: return "Shift_R";
-      case 0xA2: return "Control_L";
-      case 0xA3: return "Control_R";
-      case 0xA4: return "Alt_L";
-      case 0xA5: return "Alt_R";
-      case 0xBA: return "semicolon";
-      case 0xBB: return "equal";
-      case 0xBC: return "comma";
-      case 0xBD: return "minus";
-      case 0xBE: return "period";
-      case 0xBF: return "slash";
-      case 0xC0: return "grave";
-      case 0xDB: return "bracketleft";
-      case 0xDC: return "backslash";
-      case 0xDD: return "bracketright";
-      case 0xDE: return "apostrophe";
-      default: return "";
+      case 0x08: return XK_BackSpace;
+      case 0x09: return XK_Tab;
+      case 0x0D: return XK_Return;
+      case 0x10: return XK_Shift_L;
+      case 0x11: return XK_Control_L;
+      case 0x12: return XK_Alt_L;
+      case 0x13: return XK_Pause;
+      case 0x14: return XK_Caps_Lock;
+      case 0x1B: return XK_Escape;
+      case 0x20: return XK_space;
+      case 0x21: return XK_Page_Up;
+      case 0x22: return XK_Page_Down;
+      case 0x23: return XK_End;
+      case 0x24: return XK_Home;
+      case 0x25: return XK_Left;
+      case 0x26: return XK_Up;
+      case 0x27: return XK_Right;
+      case 0x28: return XK_Down;
+      case 0x2C: return XK_Print;
+      case 0x2D: return XK_Insert;
+      case 0x2E: return XK_Delete;
+      case 0x30: return XK_0;
+      case 0x31: return XK_1;
+      case 0x32: return XK_2;
+      case 0x33: return XK_3;
+      case 0x34: return XK_4;
+      case 0x35: return XK_5;
+      case 0x36: return XK_6;
+      case 0x37: return XK_7;
+      case 0x38: return XK_8;
+      case 0x39: return XK_9;
+      case 0x41: return XK_a;
+      case 0x42: return XK_b;
+      case 0x43: return XK_c;
+      case 0x44: return XK_d;
+      case 0x45: return XK_e;
+      case 0x46: return XK_f;
+      case 0x47: return XK_g;
+      case 0x48: return XK_h;
+      case 0x49: return XK_i;
+      case 0x4A: return XK_j;
+      case 0x4B: return XK_k;
+      case 0x4C: return XK_l;
+      case 0x4D: return XK_m;
+      case 0x4E: return XK_n;
+      case 0x4F: return XK_o;
+      case 0x50: return XK_p;
+      case 0x51: return XK_q;
+      case 0x52: return XK_r;
+      case 0x53: return XK_s;
+      case 0x54: return XK_t;
+      case 0x55: return XK_u;
+      case 0x56: return XK_v;
+      case 0x57: return XK_w;
+      case 0x58: return XK_x;
+      case 0x59: return XK_y;
+      case 0x5A: return XK_z;
+      case 0x5B: return XK_Super_L;
+      case 0x5C: return XK_Super_R;
+      case 0x60: return XK_KP_0;
+      case 0x61: return XK_KP_1;
+      case 0x62: return XK_KP_2;
+      case 0x63: return XK_KP_3;
+      case 0x64: return XK_KP_4;
+      case 0x65: return XK_KP_5;
+      case 0x66: return XK_KP_6;
+      case 0x67: return XK_KP_7;
+      case 0x68: return XK_KP_8;
+      case 0x69: return XK_KP_9;
+      case 0x6A: return XK_KP_Multiply;
+      case 0x6B: return XK_KP_Add;
+      case 0x6D: return XK_KP_Subtract;
+      case 0x6E: return XK_KP_Decimal;
+      case 0x6F: return XK_KP_Divide;
+      case 0x70: return XK_F1;
+      case 0x71: return XK_F2;
+      case 0x72: return XK_F3;
+      case 0x73: return XK_F4;
+      case 0x74: return XK_F5;
+      case 0x75: return XK_F6;
+      case 0x76: return XK_F7;
+      case 0x77: return XK_F8;
+      case 0x78: return XK_F9;
+      case 0x79: return XK_F10;
+      case 0x7A: return XK_F11;
+      case 0x7B: return XK_F12;
+      case 0x90: return XK_Num_Lock;
+      case 0x91: return XK_Scroll_Lock;
+      case 0xA0: return XK_Shift_L;
+      case 0xA1: return XK_Shift_R;
+      case 0xA2: return XK_Control_L;
+      case 0xA3: return XK_Control_R;
+      case 0xA4: return XK_Alt_L;
+      case 0xA5: return XK_Alt_R;
+      case 0xBA: return XK_semicolon;
+      case 0xBB: return XK_equal;
+      case 0xBC: return XK_comma;
+      case 0xBD: return XK_minus;
+      case 0xBE: return XK_period;
+      case 0xBF: return XK_slash;
+      case 0xC0: return XK_grave;
+      case 0xDB: return XK_bracketleft;
+      case 0xDC: return XK_backslash;
+      case 0xDD: return XK_bracketright;
+      case 0xDE: return XK_apostrophe;
+      default: return NoSymbol;
     }
   }
+#endif
 
   /**
    * Takes an UTF-32 encoded string and returns a hex string representation of the bytes (uppercase)
@@ -272,18 +264,23 @@ namespace platf::keyboard {
   };
 
   void update(input_raw_t *raw, uint16_t modcode, bool release, uint8_t flags) {
-    if (raw->use_xdotool) {
-      std::string key = vk_to_xdotool(modcode);
-      if (!key.empty()) {
-        if (release) {
-          xdotool_cmd({"keyup", key});
+#ifdef SUNSHINE_BUILD_X11
+    if (raw->use_xtest && raw->x_display) {
+      KeySym keysym = vk_to_keysym(modcode);
+      if (keysym != NoSymbol) {
+        KeyCode keycode = XKeysymToKeycode(raw->x_display, keysym);
+        if (keycode != 0) {
+          XTestFakeKeyEvent(raw->x_display, keycode, !release, CurrentTime);
+          XFlush(raw->x_display);
         } else {
-          xdotool_cmd({"keydown", key});
+          BOOST_LOG(warning) << "XTEST: no keycode for keysym: " << keysym;
         }
       } else {
-        BOOST_LOG(warning) << "xdotool: unknown key code: " << modcode;
+        BOOST_LOG(warning) << "XTEST: unknown virtual key code: " << modcode;
       }
-    } else if (raw->keyboard) {
+    } else
+#endif
+    if (raw->keyboard) {
       if (release) {
         (*raw->keyboard).release(modcode);
       } else {
@@ -293,19 +290,53 @@ namespace platf::keyboard {
   }
 
   void unicode(input_raw_t *raw, char *utf8, int size) {
-    if (raw->use_xdotool) {
-      // xdotool can type UTF-8 directly
-      std::string text(utf8, size);
-      // Escape special characters for shell
-      std::string escaped;
-      for (char c : text) {
-        if (c == '\'' || c == '\\') {
-          escaped += '\\';
+#ifdef SUNSHINE_BUILD_X11
+    if (raw->use_xtest && raw->x_display) {
+      /* Reading input text as UTF-8 */
+      auto utf8_str = boost::locale::conv::to_utf<wchar_t>(utf8, utf8 + size, "UTF-8");
+      /* Converting to UTF-32 */
+      auto utf32_str = boost::locale::conv::utf_to_utf<char32_t>(utf8_str);
+      /* To HEX string */
+      auto hex_unicode = to_hex(utf32_str);
+      BOOST_LOG(debug) << "Unicode XTEST, typing U+"sv << hex_unicode;
+
+      // Use Ctrl+Shift+U method via XTEST
+      KeyCode ctrl = XKeysymToKeycode(raw->x_display, XK_Control_L);
+      KeyCode shift = XKeysymToKeycode(raw->x_display, XK_Shift_L);
+      KeyCode u_key = XKeysymToKeycode(raw->x_display, XK_u);
+
+      /* pressing <CTRL> + <SHIFT> + U */
+      XTestFakeKeyEvent(raw->x_display, ctrl, True, CurrentTime);
+      XTestFakeKeyEvent(raw->x_display, shift, True, CurrentTime);
+      XTestFakeKeyEvent(raw->x_display, u_key, True, CurrentTime);
+      XTestFakeKeyEvent(raw->x_display, u_key, False, CurrentTime);
+
+      /* input each HEX character */
+      for (auto &ch : hex_unicode) {
+        KeySym hex_keysym;
+        if (ch >= '0' && ch <= '9') {
+          hex_keysym = XK_0 + (ch - '0');
+        } else if (ch >= 'A' && ch <= 'F') {
+          hex_keysym = XK_a + (ch - 'A');
+        } else if (ch >= 'a' && ch <= 'f') {
+          hex_keysym = XK_a + (ch - 'a');
+        } else {
+          continue;
         }
-        escaped += c;
+        KeyCode hex_keycode = XKeysymToKeycode(raw->x_display, hex_keysym);
+        if (hex_keycode != 0) {
+          XTestFakeKeyEvent(raw->x_display, hex_keycode, True, CurrentTime);
+          XTestFakeKeyEvent(raw->x_display, hex_keycode, False, CurrentTime);
+        }
       }
-      xdotool_cmd({"type", "--", "'" + escaped + "'"});
-    } else if (raw->keyboard) {
+
+      /* releasing <SHIFT> and <CTRL> */
+      XTestFakeKeyEvent(raw->x_display, shift, False, CurrentTime);
+      XTestFakeKeyEvent(raw->x_display, ctrl, False, CurrentTime);
+      XFlush(raw->x_display);
+    } else
+#endif
+    if (raw->keyboard) {
       /* Reading input text as UTF-8 */
       auto utf8_str = boost::locale::conv::to_utf<wchar_t>(utf8, utf8 + size, "UTF-8");
       /* Converting to UTF-32 */

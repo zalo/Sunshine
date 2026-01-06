@@ -163,6 +163,16 @@ if(X11_FOUND)
     add_compile_definitions(SUNSHINE_BUILD_X11)
     include_directories(SYSTEM ${X11_INCLUDE_DIR})
     list(APPEND PLATFORM_LIBRARIES ${X11_LIBRARIES})
+    # Add XTEST library for input injection in Xvfb environments
+    if(X11_Xtst_FOUND)
+        list(APPEND PLATFORM_LIBRARIES ${X11_Xtst_LIB})
+    else()
+        # Fallback: try to find Xtst directly
+        find_library(XTST_LIB Xtst)
+        if(XTST_LIB)
+            list(APPEND PLATFORM_LIBRARIES ${XTST_LIB})
+        endif()
+    endif()
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/platform/linux/x11grab.h"
             "${CMAKE_SOURCE_DIR}/src/platform/linux/x11grab.cpp")

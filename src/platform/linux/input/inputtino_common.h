@@ -10,6 +10,13 @@
 #include <libevdev/libevdev.h>
 #include <cstdlib>
 
+// X11 includes for XTEST (only when X11 support is enabled)
+#ifdef SUNSHINE_BUILD_X11
+  #include <X11/Xlib.h>
+  #include <X11/extensions/XTest.h>
+  #include <X11/keysym.h>
+#endif
+
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
@@ -28,16 +35,17 @@ namespace platf {
     gamepad_feedback_msg_t last_rgb_led;
   };
 
+#ifdef SUNSHINE_BUILD_X11
   /**
-   * @brief Check if xdotool should be used for input instead of uinput.
+   * @brief Check if XTEST should be used for input instead of uinput.
    *
    * Returns true if:
-   * - SUNSHINE_USE_XDOTOOL environment variable is set to "1"
+   * - SUNSHINE_USE_XTEST environment variable is set to "1"
    * - OR we detect we're running in Xvfb (virtual framebuffer) which doesn't read uinput
    */
-  inline bool should_use_xdotool() {
+  inline bool should_use_xtest() {
     // Check for explicit override
-    const char *env = std::getenv("SUNSHINE_USE_XDOTOOL");
+    const char *env = std::getenv("SUNSHINE_USE_XTEST");
     if (env && std::string(env) == "1") {
       return true;
     }
@@ -51,8 +59,6 @@ namespace platf {
       if (disp.find(":99") != std::string::npos ||
           disp.find(":98") != std::string::npos ||
           disp.find(":1") == 0) {  // :1, :10, etc. often virtual
-        // Additionally check if we can access /tmp/.X11-unix/X99 (Xvfb socket)
-        std::string socket_path = "/tmp/.X11-unix/X" + disp.substr(disp.find(":") + 1);
         // If the socket exists and display is :99, likely Xvfb
         if (disp.find(":99") != std::string::npos) {
           return true;
@@ -62,10 +68,14 @@ namespace platf {
 
     return false;
   }
+#endif
 
   struct input_raw_t {
     input_raw_t():
-        use_xdotool(should_use_xdotool()),
+#ifdef SUNSHINE_BUILD_X11
+        use_xtest(should_use_xtest()),
+        x_display(nullptr),
+#endif
         mouse(inputtino::Mouse::create({
           .name = "Mouse passthrough",
           .vendor_id = 0xBEEF,
@@ -79,9 +89,30 @@ namespace platf {
           .version = 0x111,
         })),
         gamepads(MAX_GAMEPADS) {
-      if (use_xdotool) {
-        BOOST_LOG(info) << "Using xdotool for input (Xvfb/virtual display detected)";
-      } else {
+#ifdef SUNSHINE_BUILD_X11
+      if (use_xtest) {
+        // Open X11 display connection for XTEST
+        x_display = XOpenDisplay(nullptr);
+        if (x_display) {
+          // Check if XTEST extension is available
+          int event_base, error_base, major, minor;
+          if (XTestQueryExtension(x_display, &event_base, &error_base, &major, &minor)) {
+            BOOST_LOG(info) << "Using X11 XTEST for input (Xvfb/virtual display detected)";
+          } else {
+            BOOST_LOG(warning) << "XTEST extension not available, falling back to uinput";
+            XCloseDisplay(x_display);
+            x_display = nullptr;
+            use_xtest = false;
+          }
+        } else {
+          BOOST_LOG(warning) << "Failed to open X11 display, falling back to uinput";
+          use_xtest = false;
+        }
+      }
+
+      if (!use_xtest)
+#endif
+      {
         if (!mouse) {
           BOOST_LOG(warning) << "Unable to create virtual mouse: " << mouse.getErrorMessage();
         }
@@ -91,10 +122,22 @@ namespace platf {
       }
     }
 
-    ~input_raw_t() = default;
+    ~input_raw_t() {
+#ifdef SUNSHINE_BUILD_X11
+      if (x_display) {
+        XCloseDisplay(x_display);
+        x_display = nullptr;
+      }
+#endif
+    }
 
-    // Flag to use xdotool instead of uinput (for Xvfb environments)
-    bool use_xdotool;
+#ifdef SUNSHINE_BUILD_X11
+    // Flag to use XTEST instead of uinput (for Xvfb environments)
+    bool use_xtest;
+
+    // X11 display connection for XTEST (only used when use_xtest is true)
+    Display *x_display;
+#endif
 
     // All devices are wrapped in Result because it might be that we aren't able to create them (ex: udev permission denied)
     inputtino::Result<inputtino::Mouse> mouse;
