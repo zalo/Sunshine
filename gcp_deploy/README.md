@@ -97,21 +97,35 @@ Chrome singleton locks are cleared before launch to prevent "profile in use" err
 
 ## Build & Deploy
 
-### Build Image
+### Quick Deploy (Recommended)
+
+The fastest way to deploy - builds the Docker image directly on the GCP VM:
 
 ```bash
 cd /path/to/Sunshine
-docker build -t sunshine-gcp:latest -f gcp_deploy/Dockerfile .
+./gcp_deploy/deploy.sh
 ```
 
-### Transfer to GCP
+This script:
+1. Copies only the build artifacts and configs to GCP (~200MB vs 4GB image)
+2. Builds the Docker image on the VM (faster with GCP network)
+3. Restarts the container with the new image
+
+### Manual Deploy (Alternative)
+
+If you prefer to build locally and transfer the image:
 
 ```bash
+# Build locally
+cd /path/to/Sunshine
+docker build -t sunshine-gcp:latest -f gcp_deploy/Dockerfile .
+
+# Transfer to GCP (slow - ~4GB)
 docker save sunshine-gcp:latest | gzip > /tmp/sunshine-gcp.tar.gz
 gcloud compute scp /tmp/sunshine-gcp.tar.gz sunshine-gpu:/tmp/ --zone=us-west1-a
 ```
 
-### Deploy Container
+### Deploy Container (after manual transfer)
 
 ```bash
 gcloud compute ssh sunshine-gpu --zone=us-west1-a
@@ -140,6 +154,12 @@ sudo docker run -d --name sunshine \
   -v /usr/lib/x86_64-linux-gnu/libnvcuvid.so.1:/usr/lib/x86_64-linux-gnu/libnvcuvid.so.1:ro \
   -v /usr/lib/x86_64-linux-gnu/libcuda.so.570.195.03:/usr/lib/x86_64-linux-gnu/libcuda.so.570.195.03:ro \
   -v /usr/lib/x86_64-linux-gnu/libcuda.so.1:/usr/lib/x86_64-linux-gnu/libcuda.so.1:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-glvkspirv.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-glvkspirv.so.570.195.03:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-gpucomp.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-gpucomp.so.570.195.03:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-glcore.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-glcore.so.570.195.03:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-glsi.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-glsi.so.570.195.03:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-eglcore.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-eglcore.so.570.195.03:ro \
+  -v /usr/lib/x86_64-linux-gnu/libnvidia-tls.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-tls.so.570.195.03:ro \
   --restart unless-stopped \
   sunshine-gcp:latest
 ```
