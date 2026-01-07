@@ -63,20 +63,42 @@ start_desktop() {
     export XDG_CONFIG_HOME=/data/.config
     export XDG_DATA_HOME=/data/.local/share
     export XDG_CACHE_HOME=/data/.cache
-    export DBUS_SESSION_BUS_ADDRESS=""
 
-    # Start dbus
+    # Wait for X display to be ready
+    log "Waiting for X display :99..."
+    for i in {1..30}; do
+        if xdpyinfo -display :99 > /dev/null 2>&1; then
+            log "X display :99 is ready!"
+            break
+        fi
+        log "Waiting for X display... ($i/30)"
+        sleep 1
+    done
+
+    if ! xdpyinfo -display :99 > /dev/null 2>&1; then
+        log "ERROR: X display :99 not available after 30 seconds"
+        exit 1
+    fi
+
+    # Start dbus session
     eval $(dbus-launch --sh-syntax)
+    export DBUS_SESSION_BUS_ADDRESS
 
-    # Set display to 144Hz if mode exists
-    log "Configuring 144Hz display mode..."
-    xrandr --newmode "1920x1080_144" 325.08 1920 1944 1976 2056 1080 1083 1088 1098 +hsync +vsync 2>/dev/null || true
-    xrandr --addmode DUMMY0 "1920x1080_144" 2>/dev/null || true
-    xrandr --output DUMMY0 --mode "1920x1080_144" 2>/dev/null || log "144Hz mode not available, using default"
+    # Set display to 144Hz if available (try both NVIDIA and dummy output names)
+    log "Configuring display mode..."
+    xrandr --output DVI-D-0 --mode 1920x1080 --rate 144 2>/dev/null || \
+    xrandr --output DUMMY0 --mode 1920x1080 2>/dev/null || \
+    log "Could not set display mode, using default"
 
     # Start XFCE
+    log "Starting XFCE session..."
     startxfce4 &
-    sleep 3
+    sleep 5
+
+    # Clear Chrome lock files from previous runs
+    rm -f /data/.config/google-chrome/SingletonLock 2>/dev/null
+    rm -f /data/.config/google-chrome/SingletonCookie 2>/dev/null
+    rm -rf /data/.config/google-chrome/Singleton* 2>/dev/null
 
     # Open Chrome with Google homepage (maximized)
     log "Opening Google Chrome..."
