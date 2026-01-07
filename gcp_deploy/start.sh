@@ -87,7 +87,10 @@ start_desktop() {
     # Start D-Bus system daemon if not running
     log "Setting up D-Bus..."
     mkdir -p /var/run/dbus
-    if [ ! -e /var/run/dbus/pid ] || ! kill -0 $(cat /var/run/dbus/pid 2>/dev/null) 2>/dev/null; then
+    # Check if D-Bus socket already exists (e.g., from host mount)
+    if [ -e /run/dbus/system_bus_socket ]; then
+        log "D-Bus system socket already exists (host mount), skipping daemon start"
+    elif [ ! -e /var/run/dbus/pid ] || ! kill -0 $(cat /var/run/dbus/pid 2>/dev/null) 2>/dev/null; then
         rm -f /var/run/dbus/pid
         dbus-daemon --system --fork
         log "D-Bus system daemon started"
