@@ -853,8 +853,12 @@ class SunshineWebRTC {
     const buffer = new ArrayBuffer(5);
     const view = new DataView(buffer);
 
+    // Handle both string codes (from desktop keyboard events like 'KeyA')
+    // and numeric VK codes (from mobile keyboard's charToKeyCode)
+    const vkCode = typeof code === 'number' ? code : this.keyCodeToVK(code);
+
     view.setUint8(0, 0x02);  // Type: keyboard
-    view.setUint16(1, this.keyCodeToVK(code), true);  // key_code (Windows VK code, little-endian)
+    view.setUint16(1, vkCode, true);  // key_code (Windows VK code, little-endian)
     view.setUint8(3, 0);     // modifiers (none for now)
     view.setUint8(4, pressed ? 1 : 0);  // pressed
 

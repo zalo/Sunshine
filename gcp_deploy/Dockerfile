@@ -4,8 +4,9 @@
 # This provides full GPU-accelerated desktop rendering via NVIDIA Xorg driver
 # (not possible on Modal due to gVisor limitations)
 
-# CUDA 13.1 with Ubuntu 24.04 for latest features
-FROM nvidia/cuda:13.1.0-runtime-ubuntu24.04
+# CUDA 12.8 with Ubuntu 24.04 for modern games/applications
+# Requires GCP VM driver upgrade to 570+ for hardware-accelerated Xorg
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04
 
 # Environment
 ENV DEBIAN_FRONTEND=noninteractive
@@ -24,8 +25,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Runtime dependencies for Sunshine
     libssl3 libcurl4 libminiupnpc17 \
     libopus0 libpulse0 \
-    # X11 and display (use Xvfb for virtual framebuffer, NVENC for encoding)
-    xserver-xorg-core xserver-xorg-video-dummy \
+    # X11 and display - NVIDIA driver for hardware-accelerated Xorg
+    xserver-xorg-core xserver-xorg-video-nvidia-570 \
+    libnvidia-gl-570 libgl1 libglx0 libegl1 \
     x11-utils libx11-6 libxcb1 \
     libxfixes3 libxrandr2 libxtst6 \
     libxcb-shm0 libxcb-xfixes0 \
@@ -69,12 +71,12 @@ RUN pip install --break-system-packages \
 # Copy Sunshine binary and assets
 # =============================================================================
 # Copy pre-built Sunshine (must be built locally first)
-# Cache bust: 2026-01-06-v3-reconnect-fix
+# Cache bust: 2026-01-07-v6-nvidia570-ubuntu24
 COPY build /opt/sunshine-build
 
 # Copy updated web assets to OVERWRITE the ones in build directory
 # This ensures the latest play.js with correct WebSocket routing is used
-# Cache bust: 2026-01-06-v3-reconnect-fix
+# Cache bust: 2026-01-07-v6-nvidia570-ubuntu24
 COPY src_assets/common/assets/web/public /opt/sunshine-build/assets/web/
 
 # =============================================================================
@@ -82,6 +84,7 @@ COPY src_assets/common/assets/web/public /opt/sunshine-build/assets/web/
 # =============================================================================
 # Xorg config for NVIDIA headless rendering
 COPY gcp_deploy/xorg.conf /etc/X11/xorg.conf
+COPY gcp_deploy/edid.bin /etc/X11/edid.bin
 
 # Sunshine configuration
 COPY gcp_deploy/sunshine.conf /opt/sunshine.conf

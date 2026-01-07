@@ -68,15 +68,22 @@ start_desktop() {
     # Start dbus
     eval $(dbus-launch --sh-syntax)
 
+    # Set display to 144Hz if mode exists
+    log "Configuring 144Hz display mode..."
+    xrandr --newmode "1920x1080_144" 325.08 1920 1944 1976 2056 1080 1083 1088 1098 +hsync +vsync 2>/dev/null || true
+    xrandr --addmode DUMMY0 "1920x1080_144" 2>/dev/null || true
+    xrandr --output DUMMY0 --mode "1920x1080_144" 2>/dev/null || log "144Hz mode not available, using default"
+
     # Start XFCE
     startxfce4 &
     sleep 3
 
-    # Open terminal
-    xfce4-terminal --geometry=100x30+400+200 &
-    sleep 1
+    # Open Chrome with Google homepage (maximized)
+    log "Opening Google Chrome..."
+    google-chrome-stable --no-sandbox --disable-gpu-sandbox --start-maximized "https://www.google.com" &
+    sleep 2
 
-    log "XFCE desktop started"
+    log "XFCE desktop started with Chrome"
 }
 
 # =====================================================
