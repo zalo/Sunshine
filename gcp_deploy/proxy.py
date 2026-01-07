@@ -207,8 +207,8 @@ async def http_proxy(request: Request, path: str):
             # Remove headers that block iframe embedding
             for header in ['x-frame-options', 'content-security-policy']:
                 response_headers.pop(header, None)
-            # Allow framing from gaming.sels.tech
-            response_headers['content-security-policy'] = "frame-ancestors 'self' https://gaming.sels.tech https://play.sels.tech https://*.sels.tech"
+            # Allow framing from sels.tech subdomains
+            response_headers['content-security-policy'] = "frame-ancestors 'self' https://*.sels.tech"
 
             return Response(
                 content=response.content,
@@ -229,18 +229,14 @@ async def http_proxy(request: Request, path: str):
 if __name__ == "__main__":
     import uvicorn
     import os
-    import multiprocessing
 
-    # Check if SSL certs exist for HTTPS server
-    ssl_cert = "/etc/letsencrypt/live/ws-stream.sels.tech/fullchain.pem"
-    ssl_key = "/etc/letsencrypt/live/ws-stream.sels.tech/privkey.pem"
+    # SSL certs from Let's Encrypt (DNS-01 challenge)
+    ssl_cert = "/etc/letsencrypt/live/stream.sels.tech/fullchain.pem"
+    ssl_key = "/etc/letsencrypt/live/stream.sels.tech/privkey.pem"
 
-    def run_http():
-        """Run HTTP server on port 80 (for Cloudflare Flexible SSL)."""
-        uvicorn.run(app, host="0.0.0.0", port=80)
-
-    def run_https():
-        """Run HTTPS server on port 443 (for direct WebSocket access)."""
+    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        # Run HTTPS server on port 443 with Let's Encrypt certs
+        logger.info("Starting HTTPS server on port 443 with Let's Encrypt SSL")
         uvicorn.run(
             app,
             host="0.0.0.0",
@@ -248,14 +244,7 @@ if __name__ == "__main__":
             ssl_certfile=ssl_cert,
             ssl_keyfile=ssl_key
         )
-
-    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
-        # Run both HTTP and HTTPS servers
-        logger.info("Starting HTTP server on port 80 and HTTPS server on port 443")
-        http_process = multiprocessing.Process(target=run_http)
-        http_process.start()
-        run_https()  # Run HTTPS in main process
     else:
-        # No SSL certs, just run HTTP
-        logger.info("No SSL certs found, starting HTTP server only on port 80")
-        run_http()
+        # Fallback to HTTP if no certs (for initial setup)
+        logger.info("No SSL certs found, starting HTTP server on port 80")
+        uvicorn.run(app, host="0.0.0.0", port=80)

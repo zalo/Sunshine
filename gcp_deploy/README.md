@@ -20,17 +20,15 @@ WebRTC game streaming server running on GCP with NVIDIA GPU acceleration.
 ├─────────────────────────────────────────────────────────────────┤
 │  Volume Mounts:                                                 │
 │  - /data/sunshine:/data (persistent config/state)              │
-│  - /etc/letsencrypt (SSL certs for WSS)                        │
+│  - /etc/letsencrypt (SSL certs via Let's Encrypt DNS-01)       │
 │  - NVIDIA libs (encode, cuvid, cuda) for NVENC                 │
 └─────────────────────────────────────────────────────────────────┘
          │
-         │ Port 80: HTTP (Cloudflare Flexible SSL)
-         │ Port 443: HTTPS/WSS (direct, Let's Encrypt)
+         │ Port 443: HTTPS/WSS (Let's Encrypt SSL)
          ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Cloudflare DNS                                                 │
-│  - stream.sels.tech (proxied) → Port 80                        │
-│  - ws-stream.sels.tech (DNS only) → Port 443 (WebSocket SSL)   │
+│  Cloudflare DNS (DNS-only, not proxied)                         │
+│  - stream.sels.tech → VM static IP (34.53.41.58)               │
 └─────────────────────────────────────────────────────────────────┘
          │
          ▼
@@ -92,9 +90,10 @@ Chrome singleton locks are cleared before launch to prevent "profile in use" err
 
 ### WebSocket Routing
 
-- **Cloudflare Flexible SSL** doesn't properly forward WebSocket upgrades
-- Solution: `ws-stream.sels.tech` is DNS-only (not proxied) with Let's Encrypt SSL
-- `play.js` connects to `wss://ws-stream.sels.tech/ws/signaling` for WebRTC signaling
+- `stream.sels.tech` is DNS-only (not Cloudflare proxied) pointing to VM static IP
+- Let's Encrypt SSL via DNS-01 challenge (works without HTTP access)
+- `play.js` connects to `wss://stream.sels.tech/ws/signaling` for WebRTC signaling
+- All traffic goes directly to the VM on port 443
 
 ## Build & Deploy
 
@@ -120,11 +119,14 @@ gcloud compute ssh sunshine-gpu --zone=us-west1-a
 # Load image
 gunzip -c /tmp/sunshine-gcp.tar.gz | sudo docker load
 
+# Stop and remove old container (if exists)
+sudo docker stop sunshine 2>/dev/null; sudo docker rm sunshine 2>/dev/null
+
 # Run container
 sudo docker run -d --name sunshine \
   --gpus all \
   --privileged \
-  -p 80:80 -p 443:443 \
+  -p 443:443 \
   -v /data/sunshine:/data \
   -v /etc/letsencrypt:/etc/letsencrypt:ro \
   -v /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-encode.so.570.195.03:ro \
@@ -147,11 +149,31 @@ sudo apt install nvidia-driver-570
 sudo reboot
 ```
 
-### Setup Let's Encrypt SSL
+### Setup Let's Encrypt SSL (DNS-01 Challenge)
+
+Using DNS-01 challenge allows cert issuance/renewal without opening port 80:
 
 ```bash
-sudo apt install certbot
-sudo certbot certonly --standalone -d ws-stream.sels.tech
+# Install certbot with Cloudflare DNS plugin
+sudo apt install certbot python3-certbot-dns-cloudflare
+
+# Create Cloudflare API credentials
+# Get API token from: https://dash.cloudflare.com/profile/api-tokens
+# Token needs Zone:DNS:Edit permission for sels.tech
+sudo mkdir -p /etc/letsencrypt
+cat << 'EOF' | sudo tee /etc/letsencrypt/cloudflare.ini
+dns_cloudflare_api_token = YOUR_CLOUDFLARE_API_TOKEN
+EOF
+sudo chmod 600 /etc/letsencrypt/cloudflare.ini
+
+# Issue certificate (60s propagation needed for Cloudflare DNS)
+sudo certbot certonly \
+  --dns-cloudflare \
+  --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini \
+  --dns-cloudflare-propagation-seconds 60 \
+  -d stream.sels.tech
+
+# Certbot auto-renewal is handled by systemd timer (certbot.timer)
 ```
 
 ### Firewall Rules
@@ -207,7 +229,7 @@ docker exec sunshine bash -c 'ps aux | grep -E "(xfce|chrome)"'
 | "Cannot load libnvidia-encode.so.1" | Mount NVENC libs with correct version number |
 | Chrome "profile in use" | Clear `/data/.config/google-chrome/Singleton*` |
 | Desktop not starting | Check desktop waits for X display (xdpyinfo loop) |
-| WebSocket 404 | Use DNS-only subdomain for WSS, not Cloudflare proxied |
+| WebSocket 404 | Ensure stream.sels.tech is DNS-only in Cloudflare (not proxied) |
 | Black video in browser | Hardware-accelerated video - click to unmute/play |
 
 ## VM Details

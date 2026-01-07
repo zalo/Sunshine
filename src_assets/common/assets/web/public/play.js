@@ -68,8 +68,8 @@ class SunshineWebRTC {
       // Modal deployment - use route-based WebSocket on same host
       signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;
     } else if (window.location.hostname.endsWith('.sels.tech')) {
-      // GCP/Cloudflare deployment - use dedicated WebSocket subdomain (DNS-only, with SSL)
-      signalingUrl = 'wss://ws-stream.sels.tech/ws/signaling';
+      // GCP deployment - WebSocket on same host (SSL via Let's Encrypt)
+      signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;
     } else if (currentPort === '8080' || currentPort === '80' || currentPort === '443') {
       // Other cloud deployment - use route-based WebSocket on same host
       signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;

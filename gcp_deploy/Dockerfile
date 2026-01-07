@@ -114,10 +114,9 @@ Terminal=false\n\
 Categories=Network;WebBrowser;' > /data/Desktop/google-chrome.desktop \
     && chmod 755 /data/Desktop/google-chrome.desktop
 
-# Expose proxy ports
-# Port 80: HTTP for Cloudflare Flexible SSL (stream.sels.tech)
-# Port 443: HTTPS for direct WebSocket access (ws-stream.sels.tech)
-EXPOSE 80 443
+# Expose proxy port
+# Port 443: HTTPS/WSS with Let's Encrypt SSL (stream.sels.tech)
+EXPOSE 443
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \

@@ -11,7 +11,7 @@
  * - GCP_ZONE: Zone where VM is located (e.g., us-west1-a)
  * - GCP_INSTANCE: VM instance name
  * - GCP_SERVICE_ACCOUNT_JSON: Service account JSON key (base64 encoded)
- * - SUNSHINE_TUNNEL_URL: Cloudflare tunnel URL for Sunshine (e.g., sunshine-stream.sels.tech)
+ * - SUNSHINE_TUNNEL_URL: Direct URL for Sunshine stream (e.g., https://stream.sels.tech)
  */
 
 export interface Env {
@@ -482,13 +482,13 @@ function generateStreamingPage(heartbeatInterval: number): string {
                     updateProgress(progress, 'Waiting for streaming service...', 'Starting up... ' + (i + 1) * 2 + 's');
                 }
 
-                // Redirect to direct IP connection on port 8080
+                // Redirect to stream.sels.tech (DNS-only with Let's Encrypt SSL)
                 updateProgress(100, 'Redirecting to stream...');
                 await new Promise(r => setTimeout(r, 500));
 
-                // Redirect to the VM's direct IP (HTTP) - avoids mixed content issues
+                // Redirect to the consolidated domain with HTTPS
                 // Note: After redirect, heartbeats will no longer be sent to the Worker
-                window.location.href = 'http://' + vmIP + ':8080/play';
+                window.location.href = 'https://stream.sels.tech/play';
 
             } catch (error) {
                 console.error('Initialization error:', error);
