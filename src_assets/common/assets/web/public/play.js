@@ -51,6 +51,10 @@ class SunshineWebRTC {
     this.FREEZE_THRESHOLD_MS = 500;       // 0.5 seconds without new frames = frozen
     this.IDR_RETRY_THRESHOLD_MS = 1000;   // 1 second = request another IDR
     this.RECONNECT_THRESHOLD_MS = 2000;   // 2 seconds = attempt reconnect
+    this.ICE_CONNECTION_TIMEOUT_MS = 3000; // 3 seconds to establish ICE connection
+    this.iceConnectionTimer = null;
+    this.iceRetryCount = 0;
+    this.MAX_ICE_RETRIES = 10;            // Max retry attempts
 
     // Pending messages queue (for SDP/ICE that arrive before peer connection is ready)
     this.pendingMessages = [];
@@ -513,6 +517,18 @@ class SunshineWebRTC {
     this.pc.oniceconnectionstatechange = () => {
       console.log('ICE connection state:', this.pc.iceConnectionState);
       this.updateConnectionStatus(this.pc.iceConnectionState);
+
+      // Clear timeout on successful connection
+      if (this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed') {
+        this.clearIceConnectionTimer();
+        this.iceRetryCount = 0; // Reset retry count on success
+        console.log('ICE connection established successfully');
+      }
+
+      // Auto-retry on failure
+      if (this.pc.iceConnectionState === 'failed' || this.pc.iceConnectionState === 'disconnected') {
+        this.handleIceConnectionFailure();
+      }
     };
 
     this.pc.onconnectionstatechange = () => {
@@ -545,6 +561,51 @@ class SunshineWebRTC {
 
     // Process any queued messages that arrived before peer connection was ready
     this.processPendingMessages();
+
+    // Start ICE connection timeout timer
+    this.startIceConnectionTimer();
+  }
+
+  startIceConnectionTimer() {
+    this.clearIceConnectionTimer();
+    console.log(`Starting ICE connection timer (${this.ICE_CONNECTION_TIMEOUT_MS}ms, attempt ${this.iceRetryCount + 1}/${this.MAX_ICE_RETRIES})`);
+
+    this.iceConnectionTimer = setTimeout(() => {
+      if (this.pc && this.pc.iceConnectionState !== 'connected' && this.pc.iceConnectionState !== 'completed') {
+        console.log('ICE connection timeout - attempting retry');
+        this.handleIceConnectionFailure();
+      }
+    }, this.ICE_CONNECTION_TIMEOUT_MS);
+  }
+
+  clearIceConnectionTimer() {
+    if (this.iceConnectionTimer) {
+      clearTimeout(this.iceConnectionTimer);
+      this.iceConnectionTimer = null;
+    }
+  }
+
+  handleIceConnectionFailure() {
+    this.clearIceConnectionTimer();
+
+    if (this.iceRetryCount >= this.MAX_ICE_RETRIES) {
+      console.error(`ICE connection failed after ${this.MAX_ICE_RETRIES} attempts`);
+      this.showNotification('Connection failed - please refresh the page');
+      return;
+    }
+
+    this.iceRetryCount++;
+    console.log(`ICE connection failed, retrying (attempt ${this.iceRetryCount}/${this.MAX_ICE_RETRIES})...`);
+    this.showNotification(`Reconnecting... (${this.iceRetryCount}/${this.MAX_ICE_RETRIES})`);
+
+    // Close existing peer connection
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+
+    // Request reconnection from server
+    this.sendSignaling('reconnect');
   }
 
   async processPendingMessages() {
@@ -1863,6 +1924,9 @@ class SunshineWebRTC {
     // Stop polling
     this.stopGamepadPolling();
     this.stopStatsPolling();
+
+    // Clear ICE connection timer
+    this.clearIceConnectionTimer();
 
     // Release pointer lock
     if (document.pointerLockElement) {

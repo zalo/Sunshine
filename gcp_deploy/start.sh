@@ -63,6 +63,10 @@ start_desktop() {
     export XDG_CONFIG_HOME=/data/.config
     export XDG_DATA_HOME=/data/.local/share
     export XDG_CACHE_HOME=/data/.cache
+    # Suppress accessibility bridge errors
+    export NO_AT_BRIDGE=1
+    # Disable DMA-BUF to avoid DRM permission errors in WebKit
+    export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
     # Wait for X display to be ready
     log "Waiting for X display :99..."
@@ -80,9 +84,31 @@ start_desktop() {
         exit 1
     fi
 
+    # Start D-Bus system daemon if not running
+    log "Setting up D-Bus..."
+    mkdir -p /var/run/dbus
+    if [ ! -e /var/run/dbus/pid ] || ! kill -0 $(cat /var/run/dbus/pid 2>/dev/null) 2>/dev/null; then
+        rm -f /var/run/dbus/pid
+        dbus-daemon --system --fork
+        log "D-Bus system daemon started"
+    fi
+
     # Start dbus session
     eval $(dbus-launch --sh-syntax)
     export DBUS_SESSION_BUS_ADDRESS
+    log "D-Bus session: $DBUS_SESSION_BUS_ADDRESS"
+
+    # Start UPower daemon (for power management queries)
+    if command -v upowerd > /dev/null 2>&1; then
+        /usr/libexec/upowerd &>/dev/null &
+        log "UPower daemon started"
+    fi
+
+    # Start notification daemon
+    if command -v /usr/lib/notification-daemon/notification-daemon > /dev/null 2>&1; then
+        /usr/lib/notification-daemon/notification-daemon &>/dev/null &
+        log "Notification daemon started"
+    fi
 
     # Set display to 144Hz if available (try both NVIDIA and dummy output names)
     log "Configuring display mode..."

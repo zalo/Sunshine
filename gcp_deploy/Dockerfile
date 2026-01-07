@@ -15,6 +15,11 @@ ENV HOME=/data
 ENV XDG_CONFIG_HOME=/data/.config
 ENV XDG_DATA_HOME=/data/.local/share
 ENV XDG_CACHE_HOME=/data/.cache
+# D-Bus and accessibility settings to suppress errors
+ENV NO_AT_BRIDGE=1
+ENV DBUS_SESSION_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+# Disable DMA-BUF renderer to avoid DRM permission errors
+ENV WEBKIT_DISABLE_DMABUF_RENDERER=1
 
 # =============================================================================
 # Runtime dependencies and desktop environment
@@ -44,6 +49,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libevdev2 \
     # Desktop environment (XFCE - lightweight)
     xfce4 xfce4-terminal dbus-x11 \
+    # D-Bus services for Chrome/GUI apps (accessibility, power, notifications)
+    at-spi2-core upower notification-daemon libnotify-bin \
     # Fonts for proper text rendering
     fonts-dejavu fonts-liberation fonts-noto-color-emoji \
     # Window manager utilities
