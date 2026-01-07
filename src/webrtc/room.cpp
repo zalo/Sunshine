@@ -88,6 +88,37 @@ namespace webrtc {
   }
 
   bool
+  Room::has_active_host() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Check if the host peer is still in the room
+    return players_.find(host_peer_id_) != players_.end();
+  }
+
+  bool
+  Room::promote_to_host(const std::string &peer_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    auto it = players_.find(peer_id);
+    if (it == players_.end()) {
+      BOOST_LOG(warning) << "Cannot promote unknown peer " << peer_id << " to host";
+      return false;
+    }
+
+    // Update the peer's player info
+    it->second.is_host = true;
+    it->second.is_spectator = false;
+    it->second.slot = PlayerSlot::PLAYER_1;
+    it->second.can_use_keyboard = true;
+    it->second.can_use_mouse = true;
+
+    // Update the room's host
+    host_peer_id_ = peer_id;
+
+    BOOST_LOG(info) << "Promoted " << it->second.name << " to host in room " << code_;
+    return true;
+  }
+
+  bool
   Room::add_spectator(std::shared_ptr<Peer> peer, const std::string &name) {
     std::lock_guard<std::mutex> lock(mutex_);
 

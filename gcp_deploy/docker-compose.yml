@@ -1,0 +1,55 @@
+# Docker Compose for local testing of Sunshine WebRTC streaming
+#
+# Prerequisites:
+# - NVIDIA GPU with drivers installed
+# - nvidia-container-toolkit installed:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html
+#
+# Usage:
+#   # Build the image
+#   docker compose build
+#
+#   # Run (requires TUNNEL_TOKEN environment variable)
+#   TUNNEL_TOKEN=your-token docker compose up
+#
+#   # Run without Cloudflare tunnel (local testing only)
+#   docker compose up sunshine
+#
+#   # Push to registry (for GCP deployment)
+#   docker compose push
+
+services:
+  sunshine:
+    build:
+      context: ..
+      dockerfile: gcp_deploy/Dockerfile
+    image: ${DOCKER_REGISTRY:-gcr.io}/${GCP_PROJECT:-john-cli}/sunshine-webrtc:latest
+    container_name: sunshine
+    runtime: nvidia
+    privileged: true
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
+      - DISPLAY=:99
+    volumes:
+      - sunshine-data:/data
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  sunshine-data:

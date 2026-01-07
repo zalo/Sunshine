@@ -1,0 +1,27 @@
+{
+  "name": "sunshine-cloud-gaming-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for Sunshine WebRTC Cloud Gaming on GCP",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc",
+    "test": "vitest",
+    "cf-typegen": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240405.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0",
+    "wrangler": "^3.40.0"
+  },
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "sunshine",
+    "webrtc",
+    "game-streaming",
+    "gcp"
+  ]
+}

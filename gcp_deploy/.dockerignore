@@ -1,0 +1,32 @@
+# GCP Deploy Docker Ignore
+# This overrides the root .dockerignore to include build artifacts
+
+# Ignore git
+.git
+
+# Ignore docs and non-essential directories
+gh-pages-template/
+scripts/
+tools/
+crowdin.yml
+
+# Ignore other docker configs
+docker/
+
+# Ignore cmake cache and temp files
+cmake-*/
+venv/
+
+# Ignore node_modules
+node_modules/
+
+# Ignore this deploy folder's node_modules
+gcp_deploy/cloudflare_worker/node_modules/
+
+# Ignore large unnecessary build artifacts
+build/CMakeFiles/
+build/CMakeCache.txt
+build/cmake_install.cmake
+build/*.ninja
+build/.ninja*
+build/_deps/boost-src/

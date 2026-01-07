@@ -155,21 +155,13 @@ namespace webrtc {
       bool host_left = room->remove_peer(peer_id);
 
       if (host_left) {
-        BOOST_LOG(info) << "Host left room " << room_code << ", closing room";
-        // Notify all remaining peers that room is closing
-        json msg;
-        msg["type"] = "room_closed";
-        msg["reason"] = "host_left";
+        BOOST_LOG(info) << "Host left room " << room_code << ", keeping room open for reconnection";
+        // For cloud streaming: don't close the room, just stop capture
+        // The next person to join will become the new host
 
-        for (const auto &peer : room->get_peers()) {
-          send_to_peer(peer->id(), msg.dump());
-        }
-
-        RoomManager::instance().remove_room(room_code);
-
-        // Stop video/audio capture if this was the last room
-        if (RoomManager::instance().room_count() == 0) {
-          BOOST_LOG(info) << "Last WebRTC room closed, stopping video/audio capture";
+        // Stop video/audio capture when no peers remain
+        if (room->get_peers().empty()) {
+          BOOST_LOG(info) << "No peers remaining, stopping video/audio capture";
           AudioSender::instance().stop();
           audio::stop_webrtc_audio_capture();
           video::stop_webrtc_capture();
@@ -327,8 +319,28 @@ namespace webrtc {
       }
       // Register the peer with the room manager so find_room_by_peer works
       RoomManager::instance().register_peer(peer_id, SINGLE_SESSION_CODE);
-      is_host = false;
-      player_slot = 0;
+
+      // If room has no active host, promote this peer to host and restart capture
+      if (!room->has_active_host()) {
+        BOOST_LOG(info) << "Room has no host, promoting " << player_name << " to host and restarting capture";
+        room->promote_to_host(peer_id);
+        is_host = true;
+        player_slot = 1;
+
+        // Restart capture since it was stopped when last peer left
+        if (!video::start_webrtc_capture()) {
+          BOOST_LOG(warning) << "Failed to restart WebRTC video capture";
+        }
+        if (audio::start_webrtc_audio_capture()) {
+          AudioSender::instance().init();
+          AudioSender::instance().start();
+        } else {
+          BOOST_LOG(warning) << "Failed to restart WebRTC audio capture";
+        }
+      } else {
+        is_host = false;
+        player_slot = 0;
+      }
     }
 
     // Set up peer callbacks for signaling
@@ -659,20 +671,13 @@ namespace webrtc {
     bool host_left = room->remove_peer(peer_id);
 
     if (host_left) {
-      // Close room
-      json msg;
-      msg["type"] = "room_closed";
-      msg["reason"] = "host_left";
+      BOOST_LOG(info) << "Host left room " << room_code << ", keeping room open for reconnection";
+      // For cloud streaming: don't close the room, just stop capture
+      // The next person to join will become the new host
 
-      for (const auto &peer : room->get_peers()) {
-        send_to_peer(peer->id(), msg.dump());
-      }
-
-      RoomManager::instance().remove_room(room_code);
-
-      // Stop video/audio capture if this was the last room
-      if (RoomManager::instance().room_count() == 0) {
-        BOOST_LOG(info) << "Last WebRTC room closed, stopping video/audio capture";
+      // Stop video/audio capture when no peers remain
+      if (room->get_peers().empty()) {
+        BOOST_LOG(info) << "No peers remaining, stopping video/audio capture";
         AudioSender::instance().stop();
         audio::stop_webrtc_audio_capture();
         video::stop_webrtc_capture();

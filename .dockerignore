@@ -18,7 +18,7 @@ crowdin.yml
 !scripts/linux_build.sh
 
 # ignore dev directories
-build/
+#build/
 cmake-*/
 venv/
 

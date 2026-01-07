@@ -95,6 +95,20 @@ namespace webrtc {
     host_peer_id() const;
 
     /**
+     * @brief Check if the room has an active host.
+     */
+    bool
+    has_active_host() const;
+
+    /**
+     * @brief Promote a peer to host (used when previous host left).
+     * @param peer_id The peer to promote.
+     * @return true if promotion successful.
+     */
+    bool
+    promote_to_host(const std::string &peer_id);
+
+    /**
      * @brief Add a peer to the room as a spectator.
      * @param peer The peer to add.
      * @param name Display name.

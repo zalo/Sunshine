@@ -1,0 +1,51 @@
+# Wrangler configuration for Sunshine Cloud Gaming Worker
+# https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "sunshine-cloud-gaming"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Account ID
+account_id = "ab77c04897c9dcc5f04b753c51dbe517"
+
+# Keep workers.dev subdomain active
+workers_dev = true
+
+# Custom domain routes
+routes = [
+  { pattern = "gaming.sels.tech/*", zone_name = "sels.tech" },
+  { pattern = "play.sels.tech/*", zone_name = "sels.tech" }
+]
+
+# KV Namespace for state management
+# Create with: wrangler kv:namespace create "SUNSHINE_STATE"
+[[kv_namespaces]]
+binding = "SUNSHINE_STATE"
+id = "611d2f05129443cc81d3f9e4f95e91a7"
+
+# Environment variables (set via wrangler secret)
+# Run these commands to set secrets:
+#   wrangler secret put GCP_PROJECT
+#   wrangler secret put GCP_ZONE
+#   wrangler secret put GCP_INSTANCE
+#   wrangler secret put GCP_SERVICE_ACCOUNT_JSON
+#   wrangler secret put SUNSHINE_TUNNEL_URL
+
+# Scheduled trigger for auto-shutdown check
+# Runs every minute to check if VM should be shut down
+[triggers]
+crons = ["* * * * *"]  # Every minute
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Build settings
+[build]
+command = "npm run build"
+
+# Production environment (optional - for staging/prod separation)
+# [env.production]
+# name = "sunshine-cloud-gaming-prod"
+# routes = [{ pattern = "gaming.yourdomain.com/*", zone_name = "yourdomain.com" }]
