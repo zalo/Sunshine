@@ -122,13 +122,18 @@ gunzip -c /tmp/sunshine-gcp.tar.gz | sudo docker load
 # Stop and remove old container (if exists)
 sudo docker stop sunshine 2>/dev/null; sudo docker rm sunshine 2>/dev/null
 
+# Create Downloads directory on host (for ROM storage, etc.)
+sudo mkdir -p /data/Downloads
+
 # Run container
 sudo docker run -d --name sunshine \
   --gpus all \
   --privileged \
   -p 443:443 \
   -v /data/sunshine:/data \
+  -v /data/Downloads:/data/Downloads \
   -v /etc/letsencrypt:/etc/letsencrypt:ro \
+  -v /run/dbus:/run/dbus:ro \
   -v /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvidia-encode.so.570.195.03:ro \
   -v /usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1:/usr/lib/x86_64-linux-gnu/libnvidia-encode.so.1:ro \
   -v /usr/lib/x86_64-linux-gnu/libnvcuvid.so.570.195.03:/usr/lib/x86_64-linux-gnu/libnvcuvid.so.570.195.03:ro \

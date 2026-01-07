@@ -52,7 +52,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget gnupg ca-certificates \
     # Utilities
     curl supervisor \
+    # Flatpak for app installation
+    flatpak \
     && rm -rf /var/lib/apt/lists/*
+
+# Setup Flatpak with Flathub repository
+RUN flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+
+# Install Dolphin Emulator via Flatpak
+RUN flatpak install -y flathub org.DolphinEmu.dolphin-emu
 
 # Install Google Chrome
 RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
@@ -99,8 +107,8 @@ RUN chmod +x /opt/start.sh
 # Supervisor configuration
 COPY gcp_deploy/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Create data directory
-RUN mkdir -p /data/sunshine /data/.config /data/.local/share /data/.cache /data/Desktop
+# Create data directories
+RUN mkdir -p /data/sunshine /data/.config /data/.local/share /data/.cache /data/Desktop /data/Downloads
 
 # Create Chrome desktop shortcut
 RUN echo '[Desktop Entry]\n\
@@ -113,6 +121,18 @@ Icon=google-chrome\n\
 Terminal=false\n\
 Categories=Network;WebBrowser;' > /data/Desktop/google-chrome.desktop \
     && chmod 755 /data/Desktop/google-chrome.desktop
+
+# Create Dolphin Emulator desktop shortcut
+RUN echo '[Desktop Entry]\n\
+Version=1.0\n\
+Type=Application\n\
+Name=Dolphin Emulator\n\
+Comment=GameCube and Wii Emulator\n\
+Exec=flatpak run org.DolphinEmu.dolphin-emu\n\
+Icon=org.DolphinEmu.dolphin-emu\n\
+Terminal=false\n\
+Categories=Game;Emulator;' > /data/Desktop/dolphin-emu.desktop \
+    && chmod 755 /data/Desktop/dolphin-emu.desktop
 
 # Expose proxy port
 # Port 443: HTTPS/WSS with Let's Encrypt SSL (stream.sels.tech)
