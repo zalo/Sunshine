@@ -143,6 +143,7 @@ sudo mkdir -p /data/Downloads
 sudo docker run -d --name sunshine \
   --gpus all \
   --privileged \
+  --shm-size=15g \
   -p 443:443 \
   -v /data/sunshine:/data \
   -v /data/Downloads:/data/Downloads \
