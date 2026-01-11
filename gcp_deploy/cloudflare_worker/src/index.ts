@@ -25,7 +25,7 @@ export interface Env {
 }
 
 // Constants
-const IDLE_TIMEOUT_SECONDS = 60 * 60; // 1 hour (effectively disabled for testing)
+const IDLE_TIMEOUT_SECONDS = 300; // 5 minutes
 const HEARTBEAT_INTERVAL_SECONDS = 30; // Client heartbeat every 30s
 
 /**
@@ -365,6 +365,15 @@ function generateStreamingPage(heartbeatInterval: number): string {
             transition: transform 0.2s;
         }
         .retry-btn:hover { transform: translateY(-2px); }
+        .stream-iframe {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            z-index: 1;
+        }
     </style>
 </head>
 <body>
@@ -385,6 +394,8 @@ function generateStreamingPage(heartbeatInterval: number): string {
         <div class="error-message" id="errorMessage">An error occurred</div>
         <button class="retry-btn" onclick="location.reload()">Retry</button>
     </div>
+
+    <iframe id="streamFrame" class="stream-iframe" style="display: none;" allow="autoplay; fullscreen; gamepad; pointer-lock; clipboard-write"></iframe>
 
     <script>
         const heartbeatInterval = ${heartbeatInterval};
@@ -482,13 +493,17 @@ function generateStreamingPage(heartbeatInterval: number): string {
                     updateProgress(progress, 'Waiting for streaming service...', 'Starting up... ' + (i + 1) * 2 + 's');
                 }
 
-                // Redirect to stream.sels.tech (DNS-only with Let's Encrypt SSL)
-                updateProgress(100, 'Redirecting to stream...');
+                // Show the stream in an iframe (keeps heartbeats active)
+                updateProgress(100, 'Launching stream...');
                 await new Promise(r => setTimeout(r, 500));
 
-                // Redirect to the consolidated domain with HTTPS
-                // Note: After redirect, heartbeats will no longer be sent to the Worker
-                window.location.href = 'https://stream.sels.tech/play';
+                const streamFrame = document.getElementById('streamFrame');
+                streamFrame.src = 'https://stream.sels.tech/play';
+                streamFrame.style.display = 'block';
+                loadingScreen.classList.add('hidden');
+
+                // Start continuous heartbeat to keep VM alive while streaming
+                setInterval(sendHeartbeat, heartbeatInterval);
 
             } catch (error) {
                 console.error('Initialization error:', error);
@@ -627,14 +642,9 @@ export default {
 
   /**
    * Scheduled handler for auto-shutdown
-   * DISABLED FOR TESTING - uncomment the logic below to re-enable
+   * Runs every minute to check if VM should be stopped due to inactivity
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    // Auto-shutdown disabled for testing
-    console.log("Auto-shutdown check skipped (disabled for testing)");
-    return;
-
-    /*
     try {
       const vmStatus = await getVMStatus(env);
 
@@ -655,6 +665,5 @@ export default {
     } catch (error) {
       console.error("Auto-shutdown check failed:", error);
     }
-    */
   },
 };
