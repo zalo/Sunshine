@@ -211,9 +211,19 @@ namespace webrtc {
         }
       });
 
-      ws->onError([this, alive, conn_id](const std::string &err_msg) {
+      ws->onError([this, alive, conn_id, ws](const std::string &err_msg) {
         if (!alive->load() || !running_.load()) return;
         BOOST_LOG(error) << "WebSocket connection " << conn_id << " error: " << err_msg;
+
+        // Explicitly close the WebSocket to ensure proper TCP cleanup
+        // This prevents sockets from getting stuck in CLOSE_WAIT state
+        try {
+          ws->close();
+        }
+        catch (...) {
+          // Ignore close errors - connection may already be in bad state
+        }
+
         {
           std::lock_guard<std::mutex> lock(connections_mutex_);
           connections_.erase(conn_id);
