@@ -92,10 +92,11 @@ namespace webrtc {
     const uint32_t samples_per_packet = 480;  // 10ms at 48kHz
 
     while (running_.load()) {
-      // Wait for and get the next audio packet
-      auto packet = packets->pop();
+      // Wait for next audio packet with timeout so we can check running_ periodically
+      auto packet = packets->pop(std::chrono::milliseconds(100));
 
       if (!packet) {
+        // Queue was stopped, empty, or timeout - check if we should continue
         if (!running_.load()) {
           break;
         }
