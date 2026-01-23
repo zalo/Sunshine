@@ -203,11 +203,12 @@ async function stopVM(env: Env): Promise<void> {
 }
 
 /**
- * Check Sunshine status via direct IP connection
+ * Check Sunshine status via HTTP on port 8080 (bypasses Cloudflare same-zone restriction)
  */
 async function checkSunshineStatus(vmIP: string): Promise<{ ready: boolean; active: number; idle: number }> {
   try {
-    // Use HTTP on port 8080 (proxy) for direct connection
+    // Use HTTP on port 8080 - the proxy runs a health check server there
+    // This bypasses Cloudflare's restriction on fetching from same-zone domains
     const response = await fetch(`http://${vmIP}:8080/api/status`, {
       cf: { cacheTtl: 0 },
     });
@@ -249,10 +250,12 @@ async function getSecondsSinceLastHeartbeat(env: Env): Promise<number> {
 }
 
 /**
- * Generate the streaming page HTML
- * vmIP is passed dynamically after VM is running
+ * Generate the streaming page HTML with embedded iframe and health monitoring
  */
 function generateStreamingPage(heartbeatInterval: number): string {
+  const IDLE_SHUTDOWN_MS = 5 * 60 * 1000; // 5 minutes
+  const HEALTH_CHECK_INTERVAL_MS = 10000; // Check health every 10 seconds
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -268,6 +271,19 @@ function generateStreamingPage(heartbeatInterval: number): string {
             background: #0a0a0f;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             color: #fff;
+        }
+        .stream-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+        .stream-iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
         }
         .loading-screen {
             position: fixed;
@@ -336,6 +352,39 @@ function generateStreamingPage(heartbeatInterval: number): string {
             width: 0%;
             transition: width 0.3s ease;
         }
+        .status-overlay {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            z-index: 200;
+            display: none;
+            cursor: pointer;
+        }
+        .status-overlay.visible { display: block; }
+        .status-overlay.healthy { border-left: 3px solid #4ade80; }
+        .status-overlay.warning { border-left: 3px solid #fbbf24; }
+        .status-overlay.error { border-left: 3px solid #f87171; }
+        .shutdown-warning {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 2rem;
+            border-radius: 12px;
+            text-align: center;
+            z-index: 300;
+            display: none;
+            border: 2px solid #f87171;
+        }
+        .shutdown-warning.visible { display: block; }
+        .shutdown-warning h2 { color: #f87171; margin-bottom: 1rem; }
+        .shutdown-warning p { margin-bottom: 1rem; color: rgba(255,255,255,0.8); }
+        .shutdown-warning .countdown { font-size: 2rem; color: #fbbf24; }
         .error-screen {
             position: fixed;
             top: 0;
@@ -368,6 +417,21 @@ function generateStreamingPage(heartbeatInterval: number): string {
     </style>
 </head>
 <body>
+    <div class="stream-container" id="streamContainer" style="display: none;">
+        <iframe id="streamFrame" class="stream-iframe" allow="autoplay; fullscreen; gamepad; pointer-lock; clipboard-write"></iframe>
+    </div>
+
+    <div class="status-overlay" id="statusOverlay">
+        <span id="overlayText">Checking...</span>
+    </div>
+
+    <div class="shutdown-warning" id="shutdownWarning">
+        <h2>Connection Lost</h2>
+        <p>Server will shut down due to inactivity</p>
+        <div class="countdown" id="shutdownCountdown">5:00</div>
+        <p style="font-size: 0.9rem; color: rgba(255,255,255,0.5);">Reconnecting will cancel shutdown</p>
+    </div>
+
     <div class="loading-screen" id="loadingScreen">
         <div class="logo">Sunshine</div>
         <div class="spinner-container">
@@ -388,9 +452,16 @@ function generateStreamingPage(heartbeatInterval: number): string {
 
     <script>
         const heartbeatInterval = ${heartbeatInterval};
+        const IDLE_SHUTDOWN_MS = ${IDLE_SHUTDOWN_MS};
+        const HEALTH_CHECK_INTERVAL_MS = ${HEALTH_CHECK_INTERVAL_MS};
+
         let startTime = Date.now();
         let vmStarted = false;
         let vmIP = null;
+        let lastHealthCheckSuccess = Date.now();
+        let healthCheckInterval = null;
+        let isStreaming = false;
+        let shutdownInitiated = false;
 
         const statusText = document.getElementById('statusText');
         const statusDetail = document.getElementById('statusDetail');
@@ -398,8 +469,21 @@ function generateStreamingPage(heartbeatInterval: number): string {
         const loadingScreen = document.getElementById('loadingScreen');
         const errorScreen = document.getElementById('errorScreen');
         const errorMessage = document.getElementById('errorMessage');
+        const streamContainer = document.getElementById('streamContainer');
+        const streamFrame = document.getElementById('streamFrame');
+        const statusOverlay = document.getElementById('statusOverlay');
+        const overlayText = document.getElementById('overlayText');
+        const shutdownWarning = document.getElementById('shutdownWarning');
+        const shutdownCountdown = document.getElementById('shutdownCountdown');
+
+        function log(message, level = 'info') {
+            const now = new Date();
+            const time = now.toLocaleTimeString('en-US', { hour12: false });
+            console.log('[' + level.toUpperCase() + '] ' + time + ' - ' + message);
+        }
 
         function showError(msg) {
+            log('ERROR: ' + msg, 'error');
             errorMessage.textContent = msg;
             errorScreen.classList.add('visible');
         }
@@ -408,6 +492,11 @@ function generateStreamingPage(heartbeatInterval: number): string {
             progressFill.style.width = percent + '%';
             statusText.textContent = text;
             statusDetail.textContent = detail;
+        }
+
+        function updateStatusOverlay(status, message) {
+            statusOverlay.className = 'status-overlay visible ' + status;
+            overlayText.textContent = message;
         }
 
         async function sendHeartbeat() {
@@ -420,96 +509,182 @@ function generateStreamingPage(heartbeatInterval: number): string {
 
         async function getVMInfo() {
             const response = await fetch('/api/vm-info');
-            const data = await response.json();
-            return data; // { status, externalIP }
+            return await response.json();
         }
 
         async function startVM() {
+            log('Starting VM...', 'info');
             const response = await fetch('/api/start-vm', { method: 'POST' });
-            if (!response.ok) {
-                throw new Error('Failed to start VM');
+            if (!response.ok) throw new Error('Failed to start VM');
+            return await response.json();
+        }
+
+        async function stopVM() {
+            log('Stopping VM...', 'warn');
+            try {
+                await fetch('/api/stop-vm', { method: 'POST' });
+            } catch (e) {
+                console.error('Failed to stop VM:', e);
             }
         }
 
-        async function checkSunshineReady() {
-            if (!vmIP) return false;
-            // Skip the API check - Cloudflare Workers can't reliably reach HTTP endpoints
-            // Just wait a reasonable time after VM is running
-            return true;
+        async function checkHealth() {
+            try {
+                const response = await fetch('https://stream.sels.tech/health', {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.status === 'healthy') {
+                        lastHealthCheckSuccess = Date.now();
+                        await sendHeartbeat();
+                        return true;
+                    }
+                }
+            } catch (e) {
+                // Health check failed
+            }
+            return false;
+        }
+
+        async function monitorHealth() {
+            const healthy = await checkHealth();
+            const timeSinceLastSuccess = Date.now() - lastHealthCheckSuccess;
+            const timeRemaining = Math.max(0, IDLE_SHUTDOWN_MS - timeSinceLastSuccess);
+            const minutesRemaining = Math.floor(timeRemaining / 60000);
+            const secondsRemaining = Math.floor((timeRemaining % 60000) / 1000);
+
+            if (healthy) {
+                updateStatusOverlay('healthy', 'Connected');
+                shutdownWarning.classList.remove('visible');
+                shutdownInitiated = false;
+            } else if (timeSinceLastSuccess > 60000) {
+                // Show warning after 1 minute of failures
+                updateStatusOverlay('warning', 'Connection issues - ' + minutesRemaining + ':' + String(secondsRemaining).padStart(2, '0'));
+
+                if (timeSinceLastSuccess > 120000) {
+                    // Show shutdown warning after 2 minutes
+                    shutdownWarning.classList.add('visible');
+                    shutdownCountdown.textContent = minutesRemaining + ':' + String(secondsRemaining).padStart(2, '0');
+                }
+            }
+
+            // Auto-shutdown after 5 minutes of no successful health checks
+            if (timeRemaining <= 0 && !shutdownInitiated) {
+                shutdownInitiated = true;
+                log('Initiating auto-shutdown due to inactivity', 'warn');
+                updateStatusOverlay('error', 'Shutting down...');
+                await stopVM();
+
+                // Show final message
+                shutdownWarning.classList.remove('visible');
+                showError('Server shut down due to inactivity. Refresh to restart.');
+
+                if (healthCheckInterval) {
+                    clearInterval(healthCheckInterval);
+                }
+            }
+        }
+
+        function showStream() {
+            isStreaming = true;
+            streamFrame.src = 'https://stream.sels.tech/play';
+            streamContainer.style.display = 'block';
+            loadingScreen.classList.add('hidden');
+            statusOverlay.classList.add('visible');
+
+            // Start continuous health monitoring
+            lastHealthCheckSuccess = Date.now();
+            healthCheckInterval = setInterval(monitorHealth, HEALTH_CHECK_INTERVAL_MS);
+
+            log('Stream started, health monitoring active', 'success');
         }
 
         async function initialize() {
+            log('Initialization started', 'info');
+
             try {
-                // Send initial heartbeat
                 await sendHeartbeat();
 
-                // Check VM status
                 updateProgress(10, 'Checking server status...');
                 let vmInfo = await getVMInfo();
+                log('VM status: ' + vmInfo.status, 'info');
 
-                // Start VM if not running
                 if (vmInfo.status === 'TERMINATED' || vmInfo.status === 'STOPPED') {
                     updateProgress(20, 'Starting cloud server...', 'This may take 1-2 minutes');
                     await startVM();
                     vmStarted = true;
+                } else if (vmInfo.status === 'RUNNING') {
+                    log('VM already running', 'success');
                 }
 
-                // Wait for VM to be running and get IP
+                // Wait for VM to be running
+                let pollCount = 0;
                 while (vmInfo.status !== 'RUNNING' || !vmInfo.externalIP) {
+                    pollCount++;
                     const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                    const progress = Math.min(20 + elapsed, 60);
-                    updateProgress(progress, 'Starting cloud server...', 'Elapsed: ' + elapsed + 's');
+                    updateProgress(Math.min(20 + elapsed, 60), 'Starting cloud server...', 'Elapsed: ' + elapsed + 's');
 
                     await new Promise(r => setTimeout(r, 3000));
                     vmInfo = await getVMInfo();
                     await sendHeartbeat();
 
-                    // Timeout after 5 minutes
                     if (elapsed > 300) {
                         throw new Error('Server startup timed out');
                     }
                 }
 
                 vmIP = vmInfo.externalIP;
-                console.log('VM external IP:', vmIP);
+                log('VM running with IP: ' + vmIP, 'success');
 
-                // Wait for services to initialize (30 seconds after VM is running)
-                updateProgress(70, 'Waiting for streaming service...', 'Services initializing...');
-                for (let i = 0; i < 15; i++) {
-                    await new Promise(r => setTimeout(r, 2000));
-                    await sendHeartbeat();
-                    const progress = Math.min(70 + i * 2, 95);
-                    updateProgress(progress, 'Waiting for streaming service...', 'Starting up... ' + (i + 1) * 2 + 's');
+                // Wait for streaming service to be ready
+                updateProgress(70, 'Waiting for streaming service...', 'Checking health...');
+                let serviceReady = false;
+                let healthPollCount = 0;
+
+                while (!serviceReady && healthPollCount < 60) {
+                    healthPollCount++;
+                    serviceReady = await checkHealth();
+
+                    if (!serviceReady) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        updateProgress(Math.min(70 + healthPollCount, 95), 'Waiting for streaming service...', 'Checking health... ' + (healthPollCount * 2) + 's');
+                    }
                 }
 
-                // Redirect to stream.sels.tech (DNS-only with Let's Encrypt SSL)
-                updateProgress(100, 'Redirecting to stream...');
-                await new Promise(r => setTimeout(r, 500));
+                if (!serviceReady) {
+                    throw new Error('Streaming service failed to start');
+                }
 
-                // Redirect to the consolidated domain with HTTPS
-                // Note: After redirect, heartbeats will no longer be sent to the Worker
-                window.location.href = 'https://stream.sels.tech/play';
+                updateProgress(100, 'Starting stream...');
+                await new Promise(r => setTimeout(r, 500));
+                showStream();
 
             } catch (error) {
-                console.error('Initialization error:', error);
+                log('Initialization failed: ' + error.message, 'error');
                 showError(error.message || 'Failed to connect to server');
             }
         }
 
-        // Handle visibility change - pause/resume heartbeats
+        // Handle visibility change
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                sendHeartbeat();
+            if (!document.hidden && isStreaming) {
+                checkHealth();
             }
         });
 
-        // Handle beforeunload - this helps with tracking when users leave
+        // Handle beforeunload
         window.addEventListener('beforeunload', () => {
-            // Send a final "leaving" signal (best effort)
             navigator.sendBeacon('/api/leaving');
         });
 
-        // Start initialization
+        // Click on status overlay to toggle details
+        statusOverlay.addEventListener('click', () => {
+            const timeSinceLastSuccess = Math.floor((Date.now() - lastHealthCheckSuccess) / 1000);
+            alert('Last successful health check: ' + timeSinceLastSuccess + ' seconds ago');
+        });
+
         initialize();
     </script>
 </body>

@@ -14,15 +14,22 @@ Routes:
 
 import asyncio
 import ssl
+import os
 import httpx
 import websockets
 from fastapi import FastAPI, WebSocket, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.websockets import WebSocketDisconnect
 import logging
 from collections import deque
 import threading
 import time
 import datetime
+
+# Cloudflare TURN configuration
+TURN_TOKEN_ID = os.environ.get("TURN_TOKEN_ID", "a4bc9d512adb0328945aa5175b91cf6c")
+TURN_API_TOKEN = os.environ.get("TURN_API_TOKEN", "75ec637d125c89fca4dfac03926d348eb85942ce840b7ac312320774de21abe8")
+TURN_CREDENTIAL_TTL = 86400  # 24 hours
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +55,15 @@ server_logs = deque(maxlen=200)
 logs_lock = threading.Lock()
 
 app = FastAPI(title="Sunshine WebRTC Proxy")
+
+# Add CORS middleware for health check polling from play.sels.tech
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://play.sels.tech", "https://gaming.sels.tech"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 
 def add_server_log(level: str, message: str):
@@ -167,6 +183,50 @@ async def get_server_logs():
     return {"logs": logs}
 
 
+@app.get("/api/turn-credentials")
+async def get_turn_credentials():
+    """
+    Generate short-lived Cloudflare TURN credentials for WebRTC.
+    Returns iceServers configuration to be passed to RTCPeerConnection.
+    """
+    if not TURN_TOKEN_ID or not TURN_API_TOKEN:
+        logger.warning("TURN credentials not configured")
+        # Return just STUN as fallback
+        return {
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]}
+            ]
+        }
+
+    url = f"https://rtc.live.cloudflare.com/v1/turn/keys/{TURN_TOKEN_ID}/credentials/generate-ice-servers"
+    headers = {
+        "Authorization": f"Bearer {TURN_API_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json={"ttl": TURN_CREDENTIAL_TTL}
+            )
+            response.raise_for_status()
+            data = response.json()
+            logger.info("Generated Cloudflare TURN credentials")
+            add_server_log("info", "Generated TURN credentials for client")
+            return data
+    except Exception as e:
+        logger.error(f"Failed to generate TURN credentials: {e}")
+        add_server_log("error", f"TURN credential generation failed: {e}")
+        # Return STUN-only fallback
+        return {
+            "iceServers": [
+                {"urls": ["stun:stun.l.google.com:19302"]}
+            ]
+        }
+
+
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
 async def http_proxy(request: Request, path: str):
     """
@@ -229,14 +289,14 @@ async def http_proxy(request: Request, path: str):
 if __name__ == "__main__":
     import uvicorn
     import os
+    import multiprocessing
 
     # SSL certs from Let's Encrypt (DNS-01 challenge)
     ssl_cert = "/etc/letsencrypt/live/stream.sels.tech/fullchain.pem"
     ssl_key = "/etc/letsencrypt/live/stream.sels.tech/privkey.pem"
 
-    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
-        # Run HTTPS server on port 443 with Let's Encrypt certs
-        logger.info("Starting HTTPS server on port 443 with Let's Encrypt SSL")
+    def run_https():
+        """Run HTTPS server on port 443."""
         uvicorn.run(
             app,
             host="0.0.0.0",
@@ -244,6 +304,22 @@ if __name__ == "__main__":
             ssl_certfile=ssl_cert,
             ssl_keyfile=ssl_key
         )
+
+    def run_http_health():
+        """Run HTTP health check server on port 8080."""
+        uvicorn.run(app, host="0.0.0.0", port=8080)
+
+    if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+        # Run both HTTPS (443) and HTTP health check (8080) servers
+        logger.info("Starting HTTPS server on port 443 with Let's Encrypt SSL")
+        logger.info("Starting HTTP health check server on port 8080")
+
+        # Start HTTP health check server in a separate process
+        health_process = multiprocessing.Process(target=run_http_health)
+        health_process.start()
+
+        # Run HTTPS server in main process
+        run_https()
     else:
         # Fallback to HTTP if no certs (for initial setup)
         logger.info("No SSL certs found, starting HTTP server on port 80")

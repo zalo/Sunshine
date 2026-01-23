@@ -72,8 +72,8 @@ class SunshineWebRTC {
       // Modal deployment - use route-based WebSocket on same host
       signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;
     } else if (window.location.hostname.endsWith('.sels.tech')) {
-      // GCP deployment - WebSocket on same host (SSL via Let's Encrypt)
-      signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;
+      // Cloudflare tunnel - use dedicated signaling hostname
+      signalingUrl = `${wsProtocol}//sunshine-signaling.sels.tech`;
     } else if (currentPort === '8080' || currentPort === '80' || currentPort === '443') {
       // Other cloud deployment - use route-based WebSocket on same host
       signalingUrl = `${wsProtocol}//${window.location.host}/ws/signaling`;
@@ -360,6 +360,27 @@ class SunshineWebRTC {
   }
 
   /**
+   * Fetch TURN credentials from the server for reliable WebRTC connectivity.
+   * Uses Cloudflare TURN service when available.
+   */
+  async fetchTurnCredentials() {
+    try {
+      const response = await fetch('/api/turn-credentials');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.iceServers && data.iceServers.length > 0) {
+          console.log('TURN credentials received:', data.iceServers.length, 'servers');
+          this.config.iceServers = data.iceServers;
+          return true;
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch TURN credentials, using STUN fallback:', err);
+    }
+    return false;
+  }
+
+  /**
    * Simplified join - automatically joins the single stream session
    * First user becomes host, subsequent users become guests
    */
@@ -369,6 +390,10 @@ class SunshineWebRTC {
 
     try {
       this.showLoading('Connecting...');
+
+      // Fetch TURN credentials for reliable connectivity
+      await this.fetchTurnCredentials();
+
       await this.connectSignaling();
       // Use new simplified 'join' message - server determines if host or guest
       this.sendSignaling('join', { player_name: name });

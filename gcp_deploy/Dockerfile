@@ -141,13 +141,17 @@ Terminal=false\n\
 Categories=Game;Emulator;' > /data/Desktop/dolphin-emu.desktop \
     && chmod 755 /data/Desktop/dolphin-emu.desktop
 
-# Expose proxy port
+# Expose proxy ports
 # Port 443: HTTPS/WSS with Let's Encrypt SSL (stream.sels.tech)
 EXPOSE 443
+# Port 8080: HTTP health check for Cloudflare Worker
+EXPOSE 8080
+# WebRTC UDP ports for media transport
+EXPOSE 40000-40100/udp
 
-# Health check
+# Health check using HTTP port 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:80/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Start all services via supervisor
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

@@ -1,33 +1,54 @@
 #!/bin/bash
 # Sunshine GCP Deployment Script
 # Builds Docker image directly on GCP VM to avoid slow image transfers
+# Uses GCS rsync for efficient incremental transfers
 
 set -e
 
 ZONE="us-west1-a"
 VM_NAME="sunshine-gpu"
+PROJECT="john-cli"
+GCS_BUCKET="gs://${PROJECT}-sunshine-deploy"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUNSHINE_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "=== Sunshine GCP Deployment ==="
-echo "Copying build artifacts and configs to GCP VM..."
 
-# Create remote build directory
-gcloud compute ssh $VM_NAME --zone=$ZONE --command="mkdir -p /tmp/sunshine-build"
+# Ensure GCS bucket exists
+echo "Ensuring GCS bucket exists..."
+gcloud storage buckets describe "$GCS_BUCKET" &>/dev/null || \
+    gcloud storage buckets create "$GCS_BUCKET" --location=us-west1
 
-# Copy required files using gcloud compute scp
-# - build/ directory (pre-built Sunshine binaries)
-# - src_assets/ (web assets)
-# - gcp_deploy/ (Dockerfile and configs)
+# Sync to GCS (incremental - only changed files)
+echo "Syncing build directory to GCS (incremental)..."
+gcloud storage rsync -r --delete-unmatched-destination-objects \
+    --exclude="CMakeFiles/|CMakeCache.txt|.*\\.ninja|_deps/boost-src/" \
+    "$SUNSHINE_ROOT/build" "$GCS_BUCKET/build"
 
-echo "Syncing build directory..."
-gcloud compute scp --recurse "$SUNSHINE_ROOT/build" $VM_NAME:/tmp/sunshine-build/ --zone=$ZONE
+echo "Syncing web assets to GCS..."
+gcloud storage rsync -r --delete-unmatched-destination-objects \
+    "$SUNSHINE_ROOT/src_assets" "$GCS_BUCKET/src_assets"
 
-echo "Syncing web assets..."
-gcloud compute scp --recurse "$SUNSHINE_ROOT/src_assets" $VM_NAME:/tmp/sunshine-build/ --zone=$ZONE
+echo "Syncing gcp_deploy configs to GCS..."
+gcloud storage rsync -r --delete-unmatched-destination-objects \
+    --exclude="cloudflare_worker/node_modules/" \
+    "$SCRIPT_DIR" "$GCS_BUCKET/gcp_deploy"
 
-echo "Syncing gcp_deploy configs..."
-gcloud compute scp --recurse "$SCRIPT_DIR" $VM_NAME:/tmp/sunshine-build/ --zone=$ZONE
+# Create remote build directory and sync from GCS
+echo "Syncing from GCS to VM (incremental)..."
+gcloud compute ssh $VM_NAME --zone=$ZONE --command="
+    mkdir -p /tmp/sunshine-build/build /tmp/sunshine-build/src_assets /tmp/sunshine-build/gcp_deploy
+    gsutil -m rsync -r -d $GCS_BUCKET/build /tmp/sunshine-build/build
+    gsutil -m rsync -r -d $GCS_BUCKET/src_assets /tmp/sunshine-build/src_assets
+    gsutil -m rsync -r -d $GCS_BUCKET/gcp_deploy /tmp/sunshine-build/gcp_deploy
+
+    # GCS rsync doesn't preserve symlinks or execute permissions - fix them
+    chmod +x /tmp/sunshine-build/build/sunshine-0.0.0.dirty
+    ln -sf sunshine-0.0.0.dirty /tmp/sunshine-build/build/sunshine
+
+    # Make lib_deps libraries executable
+    chmod +x /tmp/sunshine-build/build/lib_deps/*.so* 2>/dev/null || true
+"
 
 echo "Building Docker image on GCP VM..."
 gcloud compute ssh $VM_NAME --zone=$ZONE --command="cd /tmp/sunshine-build && sudo docker build -t sunshine-gcp:latest -f gcp_deploy/Dockerfile ."
@@ -42,6 +63,8 @@ sudo docker run -d --name sunshine \
   --privileged \
   --shm-size=15g \
   -p 443:443 \
+  -p 8080:8080 \
+  -p 40000-40100:40000-40100/udp \
   -v /data/sunshine:/data \
   -v /data/Downloads:/data/Downloads \
   -v /etc/letsencrypt:/etc/letsencrypt:ro \
