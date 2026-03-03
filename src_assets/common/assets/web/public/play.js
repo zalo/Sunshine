@@ -28,6 +28,28 @@ class SunshineWebRTC {
     this.pointerLocked = false;
     this.activePointers = new Map(); // pointerId -> { type, button }
 
+    // Trackpad mode state (mobile portrait)
+    this.trackpadMode = false;
+    this.virtualCursorX = 32768;         // 0-65535, starts centered
+    this.virtualCursorY = 32768;
+    this.trackpadSensitivity = 0.8;
+    this.gestureState = 'idle';          // idle | touched | dragging | tap_up | click_dragging
+    this.gestureTouchStart = null;       // {x, y, time}
+    this.gestureLastPos = null;          // {x, y}
+    this.gesturePointerId = null;        // track single finger
+    this.gestureTimer = null;
+    this.GESTURE_TAP_MAX_MOVE = 10;      // px threshold
+    this.GESTURE_TAP_MAX_DURATION = 250; // ms
+    this.GESTURE_TAP_RETOUCH_WINDOW = 250; // ms for tap-then-drag
+
+    // Inertia state
+    this.inertiaVelocityX = 0;           // px/ms screen velocity
+    this.inertiaVelocityY = 0;
+    this.inertiaAnimationId = null;
+    this.inertiaLastTime = 0;
+    this.INERTIA_FRICTION = 0.94;        // velocity multiplier per frame
+    this.INERTIA_MIN_VELOCITY = 0.3;     // px/ms threshold to stop
+
     // Stats
     this.stats = {
       bitrate: 0,
@@ -204,8 +226,11 @@ class SunshineWebRTC {
     // Attach to video element directly for proper iOS/mobile handling
     const videoEl = this.elements.videoElement;
     if (videoEl) {
-      // Disable default touch actions on video element
+      // Disable all default touch behaviors on video element
       videoEl.style.touchAction = 'none';
+      videoEl.style.userSelect = 'none';
+      videoEl.style.webkitUserSelect = 'none';
+      videoEl.style.webkitTouchCallout = 'none';
 
       videoEl.addEventListener('pointermove', (e) => this.handlePointerMove(e), { passive: false });
       videoEl.addEventListener('pointerdown', (e) => this.handlePointerDown(e), { passive: false });
@@ -213,11 +238,15 @@ class SunshineWebRTC {
       videoEl.addEventListener('pointercancel', (e) => this.handlePointerUp(e), { passive: false });
       videoEl.addEventListener('wheel', (e) => this.handleMouseWheel(e), { passive: false });
 
+      // Suppress all raw touch events to prevent highlighting, callouts, etc.
+      const suppress = (e) => { e.preventDefault(); e.stopPropagation(); };
+      videoEl.addEventListener('touchstart', suppress, { passive: false });
+      videoEl.addEventListener('touchmove', suppress, { passive: false });
+      videoEl.addEventListener('touchend', suppress, { passive: false });
+      videoEl.addEventListener('touchcancel', suppress, { passive: false });
+
       // Prevent context menu on long press
-      videoEl.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      });
+      videoEl.addEventListener('contextmenu', suppress);
     }
 
     // Pointer lock events
@@ -1000,6 +1029,53 @@ class SunshineWebRTC {
     e.preventDefault();
     e.stopPropagation();
 
+    // Trackpad mode: relative cursor movement for touch
+    if (this.trackpadMode && e.pointerType === 'touch') {
+      if (!this.mouseEnabled || this.playerSlot === 0) return;
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+      if (e.pointerId !== this.gesturePointerId) return;
+
+      const dx = e.clientX - this.gestureLastPos.x;
+      const dy = e.clientY - this.gestureLastPos.y;
+      this.gestureLastPos = { x: e.clientX, y: e.clientY };
+
+      if (this.gestureState === 'touched') {
+        // Check if moved past tap threshold -> transition to dragging
+        const totalDx = e.clientX - this.gestureTouchStart.x;
+        const totalDy = e.clientY - this.gestureTouchStart.y;
+        if (Math.abs(totalDx) > this.GESTURE_TAP_MAX_MOVE || Math.abs(totalDy) > this.GESTURE_TAP_MAX_MOVE) {
+          this.gestureState = 'dragging';
+        }
+      } else if (this.gestureState === 'double_touched') {
+        // Check if moved past threshold -> transition to click_dragging
+        const totalDx = e.clientX - this.gestureTouchStart.x;
+        const totalDy = e.clientY - this.gestureTouchStart.y;
+        if (Math.abs(totalDx) > this.GESTURE_TAP_MAX_MOVE || Math.abs(totalDy) > this.GESTURE_TAP_MAX_MOVE) {
+          this.gestureState = 'click_dragging';
+          // Send button down at current virtual cursor position
+          this.sendMouseMoveAbs(this.virtualCursorX, this.virtualCursorY);
+          this.sendMouseButton(0, true);
+        }
+      }
+
+      if (this.gestureState === 'dragging' || this.gestureState === 'click_dragging') {
+        this.applyTrackpadDelta(dx, dy);
+
+        // Track velocity for inertia (exponential smoothing)
+        const now = performance.now();
+        const dt = now - (this.inertiaLastTime || now);
+        this.inertiaLastTime = now;
+        if (dt > 0 && dt < 100) {
+          const vx = dx / dt;  // px/ms
+          const vy = dy / dt;
+          this.inertiaVelocityX = 0.6 * vx + 0.4 * this.inertiaVelocityX;
+          this.inertiaVelocityY = 0.6 * vy + 0.4 * this.inertiaVelocityY;
+        }
+      }
+      return;
+    }
+
+    // Desktop / non-trackpad path
     if (!this.mouseEnabled || this.playerSlot === 0) return;
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
@@ -1035,9 +1111,6 @@ class SunshineWebRTC {
     e.preventDefault();
     e.stopPropagation();
 
-    if (!this.mouseEnabled || this.playerSlot === 0) return;
-    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
-
     // Focus video container for keyboard input
     this.elements.videoContainer?.focus();
 
@@ -1046,6 +1119,43 @@ class SunshineWebRTC {
       this.elements.videoElement.muted = false;
       console.log('Audio unmuted on user interaction');
     }
+
+    // Trackpad mode: gesture state machine for touch
+    if (this.trackpadMode && e.pointerType === 'touch') {
+      if (!this.mouseEnabled || this.playerSlot === 0) return;
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+      // Only track single finger
+      if (this.gesturePointerId !== null && this.gesturePointerId !== e.pointerId) return;
+      this.gesturePointerId = e.pointerId;
+
+      // Cancel any running inertia
+      this.stopInertia();
+
+      // Capture pointer for reliable tracking
+      if (e.target.setPointerCapture) {
+        e.target.setPointerCapture(e.pointerId);
+      }
+
+      if (this.gestureState === 'tap_up') {
+        // Re-touch within tap window -> could be double-click or tap-then-drag
+        clearTimeout(this.gestureTimer);
+        this.gestureTimer = null;
+        this.gestureState = 'double_touched';
+        this.gestureTouchStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+        this.gestureLastPos = { x: e.clientX, y: e.clientY };
+      } else {
+        // Fresh touch -> touched
+        this.gestureState = 'touched';
+        this.gestureTouchStart = { x: e.clientX, y: e.clientY, time: Date.now() };
+        this.gestureLastPos = { x: e.clientX, y: e.clientY };
+      }
+      return;
+    }
+
+    // Desktop / non-trackpad path
+    if (!this.mouseEnabled || this.playerSlot === 0) return;
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
 
     // Capture the pointer for reliable tracking during drag
     if (e.target.setPointerCapture) {
@@ -1076,6 +1186,68 @@ class SunshineWebRTC {
     e.preventDefault();
     e.stopPropagation();
 
+    // Trackpad mode: gesture state machine for touch
+    if (this.trackpadMode && e.pointerType === 'touch') {
+      if (e.pointerId !== this.gesturePointerId) return;
+
+      // Release pointer capture
+      if (e.target.releasePointerCapture) {
+        try { e.target.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      }
+
+      this.gesturePointerId = null;
+
+      if (!this.mouseEnabled || this.playerSlot === 0) return;
+      if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+
+      if (this.gestureState === 'touched') {
+        // Short touch with no significant movement -> potential tap
+        const elapsed = Date.now() - (this.gestureTouchStart?.time || 0);
+        if (elapsed <= this.GESTURE_TAP_MAX_DURATION) {
+          // Transition to tap_up, wait for possible re-touch
+          this.gestureState = 'tap_up';
+          this.gestureTimer = setTimeout(() => {
+            // No re-touch within window -> send click
+            this.sendMouseMoveAbs(this.virtualCursorX, this.virtualCursorY);
+            this.sendMouseButton(0, true);
+            setTimeout(() => {
+              this.sendMouseButton(0, false);
+              this.gestureState = 'idle';
+            }, 30);
+            this.gestureTimer = null;
+          }, this.GESTURE_TAP_RETOUCH_WINDOW);
+        } else {
+          // Long touch with no movement -> just release
+          this.gestureState = 'idle';
+        }
+      } else if (this.gestureState === 'double_touched') {
+        // Double-tap without drag -> double-click
+        const elapsed = Date.now() - (this.gestureTouchStart?.time || 0);
+        if (elapsed <= this.GESTURE_TAP_MAX_DURATION) {
+          this.sendMouseMoveAbs(this.virtualCursorX, this.virtualCursorY);
+          this.sendMouseButton(0, true);
+          this.sendMouseButton(0, false);
+          this.sendMouseButton(0, true);
+          setTimeout(() => {
+            this.sendMouseButton(0, false);
+          }, 30);
+        }
+        this.gestureState = 'idle';
+      } else if (this.gestureState === 'dragging') {
+        // Drag ended — start inertia if moving fast enough
+        this.gestureState = 'idle';
+        this.startInertia();
+      } else if (this.gestureState === 'click_dragging') {
+        // Tap-then-drag ended -> button up
+        this.sendMouseButton(0, false);
+        this.gestureState = 'idle';
+      } else {
+        this.gestureState = 'idle';
+      }
+      return;
+    }
+
+    // Desktop / non-trackpad path
     // Remove from active pointers tracking
     this.activePointers.delete(e.pointerId);
 
@@ -1178,6 +1350,99 @@ class SunshineWebRTC {
     view.setInt16(4, Math.round(dy), true);
 
     this.dataChannel.send(buffer);
+  }
+
+  // ============== Trackpad Mode (Mobile Portrait) ==============
+
+  updateViewportPan() {
+    // Map virtualCursorX (0-65535) to object-position percentage
+    const pct = (this.virtualCursorX / 65535) * 100;
+    const video = this.elements.videoElement;
+    if (video) {
+      video.style.objectPosition = `${pct}% center`;
+    }
+  }
+
+  applyTrackpadDelta(screenDx, screenDy) {
+    // Convert screen-pixel finger delta to virtual cursor movement
+    const screenHeight = window.innerHeight || 1;
+    const scale = this.trackpadSensitivity * (65535 / screenHeight);
+
+    const cursorDx = Math.round(screenDx * scale);
+    const cursorDy = Math.round(screenDy * scale);
+
+    this.virtualCursorX = Math.max(0, Math.min(65535, this.virtualCursorX + cursorDx));
+    this.virtualCursorY = Math.max(0, Math.min(65535, this.virtualCursorY + cursorDy));
+
+    // Send absolute position to server
+    this.sendMouseMoveAbs(this.virtualCursorX, this.virtualCursorY);
+
+    // Pan the viewport to follow cursor horizontally
+    this.updateViewportPan();
+  }
+
+  initTrackpadMode() {
+    this.trackpadMode = true;
+    this.virtualCursorX = 32768;
+    this.virtualCursorY = 32768;
+    this.gestureState = 'idle';
+
+    // Apply cover mode via JS as well (CSS handles it, but ensure)
+    const video = this.elements.videoElement;
+    if (video) {
+      video.style.objectFit = 'cover';
+      video.style.objectPosition = '50% center';
+    }
+
+    console.log('Trackpad mode enabled (mobile portrait)');
+  }
+
+  isPortraitTouch() {
+    return window.matchMedia('(pointer: coarse) and (orientation: portrait)').matches;
+  }
+
+  startInertia() {
+    const speed = Math.sqrt(this.inertiaVelocityX ** 2 + this.inertiaVelocityY ** 2);
+    if (speed < this.INERTIA_MIN_VELOCITY) {
+      this.inertiaVelocityX = 0;
+      this.inertiaVelocityY = 0;
+      return;
+    }
+
+    this.inertiaLastTime = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const dt = now - this.inertiaLastTime;
+      this.inertiaLastTime = now;
+
+      // Apply friction
+      this.inertiaVelocityX *= this.INERTIA_FRICTION;
+      this.inertiaVelocityY *= this.INERTIA_FRICTION;
+
+      const speed = Math.sqrt(this.inertiaVelocityX ** 2 + this.inertiaVelocityY ** 2);
+      if (speed < this.INERTIA_MIN_VELOCITY) {
+        this.stopInertia();
+        return;
+      }
+
+      // Convert velocity (px/ms) * dt (ms) = screen pixels to move
+      const screenDx = this.inertiaVelocityX * dt;
+      const screenDy = this.inertiaVelocityY * dt;
+      this.applyTrackpadDelta(screenDx, screenDy);
+
+      this.inertiaAnimationId = requestAnimationFrame(tick);
+    };
+
+    this.inertiaAnimationId = requestAnimationFrame(tick);
+  }
+
+  stopInertia() {
+    if (this.inertiaAnimationId) {
+      cancelAnimationFrame(this.inertiaAnimationId);
+      this.inertiaAnimationId = null;
+    }
+    this.inertiaVelocityX = 0;
+    this.inertiaVelocityY = 0;
   }
 
   // ============== Pointer Lock ==============
@@ -1294,6 +1559,11 @@ class SunshineWebRTC {
     if (this.elements.keyboardBtn) {
       this.elements.keyboardBtn.classList.remove('hidden');
     }
+    // Enable trackpad mode on touch devices in portrait
+    if (this.isTouchDevice() && this.isPortraitTouch()) {
+      this.initTrackpadMode();
+    }
+
     // Fetch encoder info
     this.fetchEncoderInfo();
   }
@@ -1975,6 +2245,18 @@ class SunshineWebRTC {
       this.ws.close();
       this.ws = null;
     }
+
+    // Reset trackpad state
+    this.stopInertia();
+    if (this.gestureTimer) {
+      clearTimeout(this.gestureTimer);
+      this.gestureTimer = null;
+    }
+    this.trackpadMode = false;
+    this.gestureState = 'idle';
+    this.gesturePointerId = null;
+    this.gestureTouchStart = null;
+    this.gestureLastPos = null;
 
     // Reset state
     this.roomCode = null;
