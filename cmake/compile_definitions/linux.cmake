@@ -120,6 +120,73 @@ if(LIBVA_FOUND)
             "${CMAKE_SOURCE_DIR}/src/platform/linux/vaapi.cpp")
 endif()
 
+# vulkan video encoding (via FFmpeg)
+if(${SUNSHINE_ENABLE_VULKAN})
+    # use Vulkan headers from build-deps submodule (system headers may be too old, e.g. Ubuntu 22.04)
+    set(VULKAN_HEADERS_DIR "${CMAKE_SOURCE_DIR}/third-party/build-deps/third-party/FFmpeg/Vulkan-Headers/include")
+    if(NOT EXISTS "${VULKAN_HEADERS_DIR}/vulkan/vulkan.h")
+        message(FATAL_ERROR "Vulkan headers not found in build-deps submodule")
+    endif()
+
+    find_library(VULKAN_LIBRARY NAMES vulkan vulkan-1)
+    if(NOT VULKAN_LIBRARY)
+        message(FATAL_ERROR "libvulkan not found")
+    endif()
+
+    # prefer glslc, fall back to glslangValidator
+    find_program(GLSLC_EXECUTABLE glslc)
+    if(NOT GLSLC_EXECUTABLE)
+        find_program(GLSLANG_EXECUTABLE glslangValidator)
+    endif()
+    if(NOT GLSLC_EXECUTABLE AND NOT GLSLANG_EXECUTABLE)
+        message(FATAL_ERROR "Vulkan shader compiler not found (need glslc or glslangValidator)")
+    endif()
+
+    list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_BUILD_VULKAN=1)
+    include_directories(SYSTEM ${VULKAN_HEADERS_DIR})
+    list(APPEND PLATFORM_LIBRARIES ${VULKAN_LIBRARY})
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/vulkan_encode.h"
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/vulkan_encode.cpp")
+
+    # compile GLSL -> SPIR-V -> C include at build time
+    set(VULKAN_SHADER_DIR "${CMAKE_BINARY_DIR}/generated-src/shaders")
+    set(VULKAN_SHADER_SOURCE "${SUNSHINE_SOURCE_ASSETS_DIR}/linux/assets/shaders/vulkan/rgb2yuv.comp")
+    set(VULKAN_SHADER_SPV "${VULKAN_SHADER_DIR}/rgb2yuv.spv")
+    set(VULKAN_SHADER_DATA "${VULKAN_SHADER_DIR}/rgb2yuv.spv.inc")
+
+    file(MAKE_DIRECTORY "${VULKAN_SHADER_DIR}")
+
+    if(GLSLC_EXECUTABLE)
+        add_custom_command(
+                OUTPUT "${VULKAN_SHADER_SPV}"
+                COMMAND ${GLSLC_EXECUTABLE} -O "${VULKAN_SHADER_SOURCE}" -o "${VULKAN_SHADER_SPV}"
+                DEPENDS "${VULKAN_SHADER_SOURCE}"
+                COMMENT "Compiling Vulkan shader rgb2yuv.comp (glslc)"
+                VERBATIM)
+    else()
+        add_custom_command(
+                OUTPUT "${VULKAN_SHADER_SPV}"
+                COMMAND ${GLSLANG_EXECUTABLE} -V -o "${VULKAN_SHADER_SPV}" "${VULKAN_SHADER_SOURCE}"
+                DEPENDS "${VULKAN_SHADER_SOURCE}"
+                COMMENT "Compiling Vulkan shader rgb2yuv.comp (glslangValidator)"
+                VERBATIM)
+    endif()
+
+    add_custom_command(
+            OUTPUT "${VULKAN_SHADER_DATA}"
+            COMMAND ${CMAKE_COMMAND} -DSPV_FILE=${VULKAN_SHADER_SPV} -DOUT_FILE=${VULKAN_SHADER_DATA}
+                -P "${CMAKE_SOURCE_DIR}/cmake/scripts/binary_to_c.cmake"
+            DEPENDS "${VULKAN_SHADER_SPV}"
+            COMMENT "Generating C include from rgb2yuv.spv"
+            VERBATIM)
+
+    add_custom_target(vulkan_shaders
+            DEPENDS "${VULKAN_SHADER_DATA}"
+            COMMENT "Vulkan shader compilation")
+    set(SUNSHINE_TARGET_DEPENDENCIES ${SUNSHINE_TARGET_DEPENDENCIES} vulkan_shaders)
+endif()
+
 # wayland
 if(${SUNSHINE_ENABLE_WAYLAND})
     find_package(Wayland REQUIRED)
@@ -178,12 +245,42 @@ if(X11_FOUND)
             "${CMAKE_SOURCE_DIR}/src/platform/linux/x11grab.cpp")
 endif()
 
+# GIO
+pkg_check_modules(GIO gio-2.0 gio-unix-2.0 REQUIRED)
+if(GIO_FOUND)
+    include_directories(SYSTEM ${GIO_INCLUDE_DIRS})
+    list(APPEND PLATFORM_LIBRARIES ${GIO_LIBRARIES})
+endif()
+
+# Pipewire
+if(${SUNSHINE_ENABLE_PORTAL})
+    pkg_check_modules(PIPEWIRE libpipewire-0.3 REQUIRED)
+else()
+    set(PIPEWIRE_FOUND OFF)
+endif()
+if(PIPEWIRE_FOUND)
+    include_directories(SYSTEM ${PIPEWIRE_INCLUDE_DIRS})
+    list(APPEND PLATFORM_LIBRARIES ${PIPEWIRE_LIBRARIES})
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/pipewire.cpp")
+endif()
+
+# XDG portal
+set(PORTAL_FOUND OFF)
+if(PIPEWIRE_FOUND AND GIO_FOUND AND ${SUNSHINE_ENABLE_PORTAL})
+    set(PORTAL_FOUND ON)
+    add_compile_definitions(SUNSHINE_BUILD_PORTAL)
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/portalgrab.cpp")
+endif()
+
 if(NOT ${CUDA_FOUND}
         AND NOT ${WAYLAND_FOUND}
         AND NOT ${X11_FOUND}
+        AND NOT ${PORTAL_FOUND}
         AND NOT (${LIBDRM_FOUND} AND ${LIBCAP_FOUND})
         AND NOT ${LIBVA_FOUND})
-    message(FATAL_ERROR "Couldn't find either cuda, wayland, x11, (libdrm and libcap), or libva")
+    message(FATAL_ERROR "Couldn't find either cuda, libva, pipewire, wayland, x11, or (libdrm and libcap)")
 endif()
 
 # tray icon
@@ -210,12 +307,7 @@ if(${SUNSHINE_ENABLE_TRAY})
         list(APPEND SUNSHINE_EXTERNAL_LIBRARIES ${APPINDICATOR_LIBRARIES} ${LIBNOTIFY_LIBRARIES})
     endif()
 
-    # flatpak icons must be prefixed with the app id or they will not be included in the flatpak
-    if(${SUNSHINE_BUILD_FLATPAK})
-        set(SUNSHINE_TRAY_PREFIX "${PROJECT_FQDN}")
-    else()
-        set(SUNSHINE_TRAY_PREFIX "sunshine")
-    endif()
+    set(SUNSHINE_TRAY_PREFIX "${PROJECT_FQDN}")
     list(APPEND SUNSHINE_DEFINITIONS SUNSHINE_TRAY_PREFIX="${SUNSHINE_TRAY_PREFIX}")
 else()
     set(SUNSHINE_TRAY 0)
@@ -255,19 +347,11 @@ list(APPEND PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/linux/graphics.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/linux/misc.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp"
-        "${CMAKE_SOURCE_DIR}/third-party/glad/src/egl.c"
-        "${CMAKE_SOURCE_DIR}/third-party/glad/src/gl.c"
-        "${CMAKE_SOURCE_DIR}/third-party/glad/include/EGL/eglplatform.h"
-        "${CMAKE_SOURCE_DIR}/third-party/glad/include/KHR/khrplatform.h"
-        "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/gl.h"
-        "${CMAKE_SOURCE_DIR}/third-party/glad/include/glad/egl.h")
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/audio.cpp")
 
 list(APPEND PLATFORM_LIBRARIES
         dl
         pulse
         pulse-simple)
 
-include_directories(
-        SYSTEM
-        "${CMAKE_SOURCE_DIR}/third-party/glad/include")
+list(APPEND SUNSHINE_EXTERNAL_LIBRARIES glad)

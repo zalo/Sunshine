@@ -1,16 +1,9 @@
 ---
 name: CI
-permissions:
-  contents: read
+permissions: {}
 
 on:
   pull_request:
-    branches:
-      - master
-    types:
-      - opened
-      - synchronize
-      - reopened
   push:
     branches:
       - master
@@ -23,6 +16,8 @@ concurrency:
 jobs:
   github-env:
     name: GitHub Env Debug
+    permissions:
+      contents: read
     uses: LizardByte/.github/.github/workflows/__call-github-env.yml@master
 
   release-setup:
@@ -39,12 +34,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Release Setup
         id: release-setup
-        uses: LizardByte/actions/actions/release_setup@c2e99809a28d738261f986b884cad52fe3a91d5b  # v2025.1227.191137
-
+        uses: LizardByte/actions/actions/release_setup@4125866b7b655a6fe038b0e22a43a4c5d259af79  # v2026.417.35446
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -56,22 +50,24 @@ jobs:
       packages: write
     uses: LizardByte/.github/.github/workflows/__call-docker.yml@master
     with:
+      docker_hub_username: ${{ vars.DOCKER_HUB_USERNAME }}
+      gh_bot_name: ${{ vars.GH_BOT_NAME }}
       maximize_build_space: true
       publish_release: ${{ needs.release-setup.outputs.publish_release }}
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
       release_tag: ${{ needs.release-setup.outputs.release_tag }}
       release_version: ${{ needs.release-setup.outputs.release_version }}
     secrets:
-      DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}
       DOCKER_HUB_PASSWORD: ${{ secrets.DOCKER_HUB_PASSWORD }}
       DOCKER_HUB_ACCESS_TOKEN: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-      GH_BOT_NAME: ${{ secrets.GH_BOT_NAME }}
       GH_BOT_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-freebsd:
     name: FreeBSD
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-freebsd.yml
     with:
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
@@ -80,8 +76,11 @@ jobs:
   build-homebrew:
     name: Homebrew
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-homebrew.yml
     with:
+      git_username: ${{ vars.GH_BOT_NAME }}
       publish_release: ${{ needs.release-setup.outputs.publish_release }}
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
       release_tag: ${{ needs.release-setup.outputs.release_tag }}
@@ -89,11 +88,32 @@ jobs:
     secrets:
       GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
       GIT_EMAIL: ${{ secrets.GH_BOT_EMAIL }}
-      GIT_USERNAME: ${{ secrets.GH_BOT_NAME }}
+
+  build-macos:
+    name: macOS
+    needs: release-setup
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci-macos.yml
+    with:
+      publish_release: ${{ needs.release-setup.outputs.publish_release }}
+      release_commit: ${{ needs.release-setup.outputs.release_commit }}
+      release_version: ${{ needs.release-setup.outputs.release_version }}
+    secrets:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_NOTARYTOOL_PASSWORD: ${{ secrets.APPLE_NOTARYTOOL_PASSWORD }}
+      APPLE_CODESIGN_IDENTITY: ${{ secrets.APPLE_CODESIGN_IDENTITY }}
+      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64: >-
+        ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+      APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD: >-
+        ${{ secrets.APPLE_DEVELOPER_ID_APPLICATION_CERTIFICATE_P12_PASSWORD }}
 
   build-linux:
     name: Linux
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-linux.yml
     with:
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
@@ -102,6 +122,8 @@ jobs:
   build-archlinux:
     name: Archlinux
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-archlinux.yml
     with:
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
@@ -122,6 +144,8 @@ jobs:
   build-linux-flatpak:
     name: Linux Flatpak
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-flatpak.yml
     with:
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
@@ -130,14 +154,26 @@ jobs:
   build-windows:
     name: Windows
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-windows.yml
     with:
+      azure_signing_account: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      azure_signing_cert_profile: ${{ vars.AZURE_SIGNING_CERT_PROFILE }}
+      azure_signing_endpoint: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      publish_release: ${{ needs.release-setup.outputs.publish_release }}
       release_commit: ${{ needs.release-setup.outputs.release_commit }}
       release_version: ${{ needs.release-setup.outputs.release_version }}
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
   bundle-analysis:
     name: Bundle Analysis
     needs: release-setup
+    permissions:
+      contents: read
     uses: ./.github/workflows/ci-bundle.yml
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -153,8 +189,11 @@ jobs:
       - build-linux
       - build-archlinux
       - build-linux-flatpak
+      - build-macos
       - build-homebrew
       - build-windows
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -172,6 +211,12 @@ jobs:
           - name: Archlinux
             coverage: true
             pr: true
+          - name: macOS-arm64
+            coverage: true
+            pr: true
+          - name: macOS-x86_64
+            coverage: true
+            pr: true
           - name: Homebrew-macos-14
             coverage: false
             pr: true
@@ -187,6 +232,9 @@ jobs:
           - name: Windows-AMD64
             coverage: true
             pr: true
+          - name: Windows-ARM64
+            coverage: true
+            pr: true
     steps:
       - name: Should run
         id: should_run
@@ -199,35 +247,37 @@ jobs:
 
       - name: Checkout
         if: steps.should_run.outputs.SHOULD_RUN == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - name: Download coverage artifact
         if: steps.should_run.outputs.SHOULD_RUN == 'true'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: coverage-${{ matrix.name }}
           path: _coverage
 
-      - name: Upload test results
-        if: steps.should_run.outputs.SHOULD_RUN == 'true'
-        uses: codecov/test-results-action@v1
-        with:
-          disable_search: true
-          fail_ci_if_error: true
-          files: ./_coverage/tests/test_results.xml
-          flags: ${{ matrix.name }}
-          token: ${{ secrets.CODECOV_TOKEN }}
-          verbose: true
-
-      - name: Upload coverage
+      - name: Upload test coverage
         if: |
           steps.should_run.outputs.SHOULD_RUN == 'true'  &&
           matrix.coverage != false
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2  # v6.0.0
         with:
           disable_search: true
           fail_ci_if_error: true
           files: ./_coverage/coverage.xml
+          report_type: coverage
+          flags: ${{ matrix.name }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          verbose: true
+
+      - name: Upload test results
+        if: steps.should_run.outputs.SHOULD_RUN == 'true'
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2  # v6.0.0
+        with:
+          disable_search: true
+          fail_ci_if_error: true
+          files: ./_coverage/tests/test_results.xml
+          report_type: test_results
           flags: ${{ matrix.name }}
           token: ${{ secrets.CODECOV_TOKEN }}
           verbose: true
@@ -245,11 +295,14 @@ jobs:
       - build-homebrew
       - build-linux
       - build-linux-flatpak
+      - build-macos
       - build-windows
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           path: artifacts
           pattern: build-*
@@ -259,7 +312,7 @@ jobs:
         run: ls -l artifacts
 
       - name: Create/Update GitHub Release
-        uses: LizardByte/actions/actions/release_create@c2e99809a28d738261f986b884cad52fe3a91d5b  # v2025.1227.191137
+        uses: LizardByte/actions/actions/release_create@4125866b7b655a6fe038b0e22a43a4c5d259af79  # v2026.417.35446
         with:
           allowUpdates: false
           body: ${{ needs.release-setup.outputs.release_body }}
@@ -279,20 +332,23 @@ jobs:
       - release-setup
       - build-homebrew
       - release
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Download homebrew artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
           name: beta-Homebrew
           path: homebrew
 
       - name: Upload Homebrew Beta Formula
-        uses: LizardByte/actions/actions/release_homebrew@c2e99809a28d738261f986b884cad52fe3a91d5b  # v2025.1227.191137
+        uses: LizardByte/actions/actions/release_homebrew@4125866b7b655a6fe038b0e22a43a4c5d259af79  # v2026.417.35446
         with:
+          actionlint_config: "---\n# empty config"
           formula_file: ${{ github.workspace }}/homebrew/sunshine-beta.rb
           git_email: ${{ secrets.GH_BOT_EMAIL }}
-          git_username: ${{ secrets.GH_BOT_NAME }}
+          git_username: ${{ vars.GH_BOT_NAME }}
           publish: true
           token: ${{ secrets.GH_BOT_TOKEN }}
           validate: false

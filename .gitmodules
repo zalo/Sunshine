@@ -9,11 +9,14 @@
 [submodule "third-party/build-deps"]
 	path = third-party/build-deps
 	url = https://github.com/LizardByte/build-deps.git
-	branch = dist
+	branch = master
 [submodule "third-party/doxyconfig"]
 	path = third-party/doxyconfig
 	url = https://github.com/LizardByte/doxyconfig.git
 	branch = master
+[submodule "third-party/glad"]
+	path = third-party/glad
+	url = https://github.com/Dav1dde/glad.git
 [submodule "third-party/googletest"]
 	path = third-party/googletest
 	url = https://github.com/google/googletest.git
@@ -37,11 +40,11 @@
 [submodule "third-party/nv-codec-headers"]
 	path = third-party/nv-codec-headers
 	url = https://github.com/FFmpeg/nv-codec-headers.git
-	branch = sdk/12.0
-[submodule "third-party/nvapi-open-source-sdk"]
-	path = third-party/nvapi-open-source-sdk
-	url = https://github.com/LizardByte/nvapi-open-source-sdk.git
-	branch = sdk
+	branch = master
+[submodule "third-party/nvapi"]
+	path = third-party/nvapi
+	url = https://github.com/NVIDIA/nvapi.git
+	branch = main
 [submodule "third-party/Simple-Web-Server"]
 	path = third-party/Simple-Web-Server
 	url = https://github.com/LizardByte-infrastructure/Simple-Web-Server.git

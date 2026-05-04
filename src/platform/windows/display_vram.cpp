@@ -28,6 +28,7 @@ extern "C" {
 #include "src/nvenc/nvenc_d3d11_on_cuda.h"
 #include "src/nvenc/nvenc_utils.h"
 #include "src/video.h"
+#include "utf_utils.h"
 
 #if !defined(SUNSHINE_SHADERS_DIR)  // for testing this needs to be defined in cmake as we don't do an install
   #define SUNSHINE_SHADERS_DIR SUNSHINE_ASSETS_DIR "/shaders/directx"
@@ -359,7 +360,7 @@ namespace platf::dxgi {
     flags |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
-    auto wFile = from_utf8(file);
+    auto wFile = utf_utils::from_utf8(file);
     auto status = D3DCompileFromFile(wFile.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entrypoint, shader_model, flags, 0, &compiled_p, &msg_p);
 
     if (msg_p) {
@@ -949,8 +950,10 @@ namespace platf::dxgi {
     ps_t convert_UV_ps;
     ps_t convert_UV_fp16_ps;
 
-    std::array<D3D11_VIEWPORT, 3> out_Y_or_YUV_viewports, out_Y_or_YUV_viewports_for_clear;
-    D3D11_VIEWPORT out_UV_viewport, out_UV_viewport_for_clear;
+    std::array<D3D11_VIEWPORT, 3> out_Y_or_YUV_viewports;
+    std::array<D3D11_VIEWPORT, 3> out_Y_or_YUV_viewports_for_clear;
+    D3D11_VIEWPORT out_UV_viewport;
+    D3D11_VIEWPORT out_UV_viewport_for_clear;
 
     DXGI_FORMAT format;
 
@@ -1904,6 +1907,12 @@ namespace platf::dxgi {
     } else if (adapter_desc.VendorId == 0x10de) {  // Nvidia
       // If it's not an NVENC encoder, it's not compatible with an Nvidia GPU
       if (!boost::algorithm::ends_with(name, "_nvenc")) {
+        return false;
+      }
+    } else if (adapter_desc.VendorId == 0x4D4F4351 ||  // Qualcomm (QCOM as MOQC reversed)
+               adapter_desc.VendorId == 0x5143) {  // Qualcomm alternate ID
+      // If it's not a MediaFoundation encoder, it's not compatible with a Qualcomm GPU
+      if (!boost::algorithm::ends_with(name, "_mf")) {
         return false;
       }
     } else {

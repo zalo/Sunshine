@@ -41,8 +41,6 @@ endif()
 if(APPLE)
     option(SUNSHINE_CONFIGURE_PORTFILE
             "Configure macOS Portfile. Recommended to use with SUNSHINE_CONFIGURE_ONLY" OFF)
-    option(SUNSHINE_PACKAGE_MACOS
-            "Should only be used when creating a macOS package/dmg." OFF)
 elseif(UNIX)  # Linux
     option(SUNSHINE_BUILD_APPIMAGE
             "Enable an AppImage build." OFF)
@@ -60,8 +58,12 @@ elseif(UNIX)  # Linux
             "Enable KMS grab if available." ON)
     option(SUNSHINE_ENABLE_VAAPI
             "Enable building vaapi specific code." ON)
+    option(SUNSHINE_ENABLE_VULKAN
+            "Enable Vulkan video encoding." ON)
     option(SUNSHINE_ENABLE_WAYLAND
             "Enable building wayland specific code." ON)
     option(SUNSHINE_ENABLE_X11
             "Enable X11 grab if available." ON)
+    option(SUNSHINE_ENABLE_PORTAL
+            "Enable XDG portal grab if available" ON)
 endif()

@@ -23,7 +23,7 @@ _versioned_gcc=false  # set to true if we need a versioned gcc, e.g. gcc14
 
 _gcc_dep_suffix=""
 _gcc_env_suffix=""
-if [ "${_versioned_gcc}" = true ]; then
+if [ "${_versioned_gcc}" == true ]; then
   _gcc_dep_suffix="${_gcc_version}"
   _gcc_env_suffix="-${_gcc_version}"
 fi
@@ -37,6 +37,7 @@ depends=(
   'libevdev'
   'libmfx'
   'libnotify'
+  'libpipewire'
   'libpulse'
   'libva'
   'libx11'
@@ -49,6 +50,7 @@ depends=(
   'openssl'
   'opus'
   'udev'
+  'vulkan-icd-loader'
   'which'
 )
 
@@ -62,6 +64,9 @@ makedepends=(
   'make'
   'nodejs'
   'npm'
+  'python-jinja'  # required by the glad OpenGL/EGL loader generator
+  'python-setuptools'  # required for glad OpenGL/EGL loader generated, v2.0.0
+  'shaderc'
 )
 
 checkdepends=(
@@ -169,7 +174,7 @@ build() {
     desktop-file-validate "build/dev.lizardbyte.app.Sunshine.desktop"
     desktop-file-validate "build/dev.lizardbyte.app.Sunshine.terminal.desktop"
 
-    make -C build
+    cmake --build build
 }
 
 check() {
@@ -217,5 +222,5 @@ check() {
 
 package() {
     export MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}"
-    make -C build install DESTDIR="$pkgdir"
+    DESTDIR="$pkgdir" cmake --install build
 }

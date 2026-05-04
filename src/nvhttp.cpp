@@ -132,6 +132,7 @@ namespace nvhttp {
     std::string name;
     std::string uuid;
     std::string cert;
+    bool enabled = true;
   };
 
   struct client_t {
@@ -190,6 +191,7 @@ namespace nvhttp {
       named_cert_node.put("name"s, named_cert.name);
       named_cert_node.put("cert"s, named_cert.cert);
       named_cert_node.put("uuid"s, named_cert.uuid);
+      named_cert_node.put("enabled"s, named_cert.enabled);
       named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
     }
     root.add_child("root.named_devices"s, named_cert_nodes);
@@ -253,6 +255,7 @@ namespace nvhttp {
         named_cert.name = el.get_child("name").get_value<std::string>();
         named_cert.cert = el.get_child("cert").get_value<std::string>();
         named_cert.uuid = el.get_child("uuid").get_value<std::string>();
+        named_cert.enabled = el.get<bool>("enabled", true);
         client.named_devices.emplace_back(named_cert);
       }
     }
@@ -305,12 +308,12 @@ namespace nvhttp {
       x++;
     }
     launch_session->unique_id = (get_arg(args, "uniqueid", "unknown"));
-    launch_session->appid = util::from_view(get_arg(args, "appid", "unknown"));
+    launch_session->appid = (int) util::from_view(get_arg(args, "appid", "unknown"));
     launch_session->enable_sops = util::from_view(get_arg(args, "sops", "0"));
-    launch_session->surround_info = util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
+    launch_session->surround_info = (int) util::from_view(get_arg(args, "surroundAudioInfo", "196610"));
     launch_session->surround_params = (get_arg(args, "surroundParams", ""));
     launch_session->continuous_audio = util::from_view(get_arg(args, "continuousAudio", "0"));
-    launch_session->gcmap = util::from_view(get_arg(args, "gcmap", "0"));
+    launch_session->gcmap = (int) util::from_view(get_arg(args, "gcmap", "0"));
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
 
     // Encrypted RTSP is enabled with client reported corever >= 1
@@ -331,7 +334,7 @@ namespace nvhttp {
     RAND_bytes((unsigned char *) &launch_session->control_connect_data, sizeof(launch_session->control_connect_data));
 
     launch_session->iv.resize(16);
-    uint32_t prepend_iv = util::endian::big<uint32_t>(util::from_view(get_arg(args, "rikeyid")));
+    uint32_t prepend_iv = util::endian::big<uint32_t>((int) util::from_view(get_arg(args, "rikeyid")));
     auto prepend_iv_p = (uint8_t *) &prepend_iv;
     std::copy(prepend_iv_p, prepend_iv_p + sizeof(prepend_iv), std::begin(launch_session->iv));
     return launch_session;
@@ -589,6 +592,7 @@ namespace nvhttp {
           std::getline(std::cin, pin);
 
           getservercert(ptr->second, tree, pin);
+          return;
         } else {
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
           system_tray::update_tray_require_pin();
@@ -757,6 +761,10 @@ namespace nvhttp {
     }
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
 
+    if (!config::nvhttp.external_ip.empty()) {
+      tree.put("root.ExternalIP", config::nvhttp.external_ip);
+    }
+
     auto current_appid = proc::proc.running();
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
@@ -776,6 +784,7 @@ namespace nvhttp {
       nlohmann::json named_cert_node;
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
+      named_cert_node["enabled"] = named_cert.enabled;
       named_cert_nodes.push_back(named_cert_node);
     }
 
@@ -893,7 +902,7 @@ namespace nvhttp {
     }
 
     if (appid > 0) {
-      auto err = proc::proc.execute(appid, launch_session);
+      auto err = proc::proc.execute((int) appid, launch_session);
       if (err) {
         tree.put("root.<xmlattr>.status_code", err);
         tree.put("root.<xmlattr>.status_message", "Failed to start the specified application");
@@ -1041,7 +1050,7 @@ namespace nvhttp {
     print_req<SunshineHTTPS>(request);
 
     auto args = request->parse_query_string();
-    auto app_image = proc::proc.get_app_image(util::from_view(get_arg(args, "appid")));
+    auto app_image = proc::proc.get_app_image((int) util::from_view(get_arg(args, "appid")));
 
     std::ifstream in(app_image, std::ios::binary);
     SimpleWeb::CaseInsensitiveMultimap headers;
@@ -1055,7 +1064,10 @@ namespace nvhttp {
     conf_intern.servercert = cert;
   }
 
+  bool is_client_enabled(const std::string_view cert_pem);
+
   void start() {
+    platf::set_thread_name("nvhttp");
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
     auto port_http = net::map_port(PORT_HTTP);
@@ -1122,6 +1134,13 @@ namespace nvhttp {
         return verified;
       }
 
+      // Check if this client is enabled
+      auto pem = crypto::pem(x509);
+      if (!is_client_enabled(pem)) {
+        BOOST_LOG(info) << "Client is disabled -- denied"sv;
+        return verified;
+      }
+
       verified = 1;
 
       return verified;
@@ -1173,6 +1192,8 @@ namespace nvhttp {
 
     auto accept_and_run = [&](auto *http_server) {
       try {
+        std::string name = "nvhttp::" + std::to_string(http_server->config.port);
+        platf::set_thread_name(name);
         http_server->start();
       } catch (boost::system::system_error &err) {
         // It's possible the exception gets thrown after calling http_server->stop() from a different thread
@@ -1220,5 +1241,27 @@ namespace nvhttp {
     save_state();
     load_state();
     return removed;
+  }
+
+  bool set_client_enabled(const std::string_view uuid, bool enabled) {
+    client_t &client = client_root;
+    for (auto &named_cert : client.named_devices) {
+      if (named_cert.uuid == uuid) {
+        named_cert.enabled = enabled;
+        save_state();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool is_client_enabled(const std::string_view cert_pem) {
+    const client_t &client = client_root;
+    for (const auto &named_cert : client.named_devices) {
+      if (named_cert.cert == cert_pem) {
+        return named_cert.enabled;
+      }
+    }
+    return true;
   }
 }  // namespace nvhttp

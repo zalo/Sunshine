@@ -160,16 +160,21 @@ sudo usermod -aG input $USER
 ```
 
 ### KMS Streaming fails
-If screencasting fails with KMS, you may need to run the following to force unprivileged screencasting.
+KMS screencasting requires elevated privileges which are not allowed for Flatpak or AppImage packages.
+This means that you must install Sunshine using the native package format of your distribution, if available.
+KMS capture will soon be phased out in favour of XDG Portal Capture (which works with all package types).
+
+### KMS Streaming; some windows flicker/disappear on KDE Plasma 6.5+
+KWin's overlay support interferes with KMS capture. As of KWin 6.5 this is not yet set by default, but
+for future versions that enables this by default, you may be able to disable again via a special
+[environment variable](https://invent.kde.org/plasma/kwin/-/wikis/Environment-Variables#kwin_use_overlays):
 
 ```bash
-sudo setcap -r $(readlink -f $(which sunshine))
+export KWIN_USE_OVERLAYS=0
 ```
 
 > [!NOTE]
-> The above command will not work with the AppImage or Flatpak packages. Please refer to the
-> [AppImage setup](md_docs_2getting__started.html#appimage) or
-> [Flatpak setup](md_docs_2getting__started.html#flatpak) for more specific instructions.
+> Disabling overlays will reduce KWin's rendering efficiency. Consider using XDG Portal Capture instead.
 
 ### KMS streaming fails on Nvidia GPUs
 If KMS screen capture results in a black screen being streamed, you may need to
@@ -223,7 +228,12 @@ launchctl load -w /Library/LaunchAgents/org.freedesktop.dbus-session.plist
 ## Windows
 
 ### No gamepad detected
-Verify that you've installed [Nefarius Virtual Gamepad](https://github.com/nefarius/ViGEmBus/releases/latest).
+You must install ViGEmBus to use virtual gamepads. You can install this from the troubleshooting tab of the web UI.
+
+Alternatively, you can manually install it from
+[ViGEmBus releases](https://github.com/nefarius/ViGEmBus/releases/latest). You must use version 1.17 or newer.
+
+After installation, it is recommended to restart your computer.
 
 ### Permission denied
 Since Sunshine runs as a service on Windows, it may not have the same level of access that your regular user account

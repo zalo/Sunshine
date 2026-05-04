@@ -19,6 +19,13 @@ namespace config {
   // track modified config options
   inline std::unordered_map<std::string, std::string> modified_config_settings;
 
+  // sensitive values that should be redacted from logging
+  inline constexpr std::array redacted_config = {
+    "csrf_allowed_origins"
+  };
+
+  void log_config_settings(const std::unordered_map<std::string, std::string> &vars, bool save);
+
   struct video_t {
     // ffmpeg params
     int qp;  // higher == more compression and less quality
@@ -79,6 +86,11 @@ namespace config {
     struct {
       bool strict_rc_buffer;
     } vaapi;
+
+    struct {
+      int tune;  // 0=default, 1=hq, 2=ll, 3=ull, 4=lossless
+      int rc_mode;  // 0=driver, 1=cqp, 2=cbr, 4=vbr
+    } vk;
 
     std::string capture;
     std::string encoder;
@@ -145,10 +157,10 @@ namespace config {
   };
 
   struct audio_t {
-    std::string sink;
-    std::string virtual_sink;
-    bool stream;
-    bool install_steam_drivers;
+    std::string sink;  ///< Audio output device/sink to use for audio capture
+    std::string virtual_sink;  ///< Virtual audio sink for audio routing
+    bool stream;  ///< Enable audio streaming to clients
+    bool install_steam_drivers;  ///< Install Steam audio drivers for enhanced compatibility
   };
 
   constexpr int ENCRYPTION_MODE_NEVER = 0;  // Never use video encryption, even if the client supports it
@@ -273,6 +285,10 @@ namespace config {
     std::vector<prep_cmd_t> prep_cmds;
 
     webrtc_t webrtc;  ///< WebRTC multiplayer streaming configuration
+
+    // List of allowed origins for CSRF protection (e.g., "https://example.com,https://app.example.com")
+    // Comma-separated list of additional origins. Default includes localhost variants and web UI port.
+    std::vector<std::string> csrf_allowed_origins;
   };
 
   extern video_t video;

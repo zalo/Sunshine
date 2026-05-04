@@ -3,71 +3,6 @@
 
 <head>
       <%- header %>
-      <style>
-        .precmd-head {
-          width: 200px;
-        }
-
-        .monospace {
-          font-family: monospace;
-        }
-
-        .cover-finder {}
-
-        .cover-finder .cover-results {
-          max-height: 400px;
-          overflow-x: hidden;
-          overflow-y: auto;
-        }
-
-        .cover-finder .cover-results.busy * {
-          cursor: wait !important;
-          pointer-events: none;
-        }
-
-        .cover-container {
-          padding-top: 133.33%;
-          position: relative;
-        }
-
-        .cover-container.result {
-          cursor: pointer;
-        }
-
-        .spinner-border {
-          position: absolute;
-          left: 0;
-          top: 0;
-          right: 0;
-          bottom: 0;
-          margin: auto;
-        }
-
-        .cover-container img {
-          display: block;
-          position: absolute;
-          top: 0;
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        .config-page {
-          padding: 1em;
-          border: 1px solid #dee2e6;
-          border-top: none;
-        }
-
-        td {
-          padding: 0 0.5em;
-        }
-
-        .env-table td {
-          padding: 0.25em;
-          border-bottom: rgba(0, 0, 0, 0.25) 1px solid;
-          vertical-align: top;
-        }
-      </style>
 </head>
 
 <body id="app" v-cloak>
@@ -75,33 +10,60 @@
   <div class="container">
     <div class="my-4">
       <h1>{{ $t('apps.applications_title') }}</h1>
-      <div>{{ $t('apps.applications_desc') }}</div>
+      <p>{{ $t('apps.applications_desc') }}</p>
     </div>
-    <div class="card p-4">
-      <table class="table">
-        <thead>
-          <tr>
-            <th scope="col">{{ $t('apps.name') }}</th>
-            <th scope="col">{{ $t('apps.actions') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="(app,i) in apps" :key="i">
-            <td>{{app.name}}</td>
-            <td>
-              <button class="btn btn-primary mx-1" @click="editApp(i)">
-                <i class="fas fa-edit"></i> {{ $t('apps.edit') }}
+
+    <!-- Apps Grid -->
+    <div class="row g-3" v-if="apps && apps.length > 0">
+      <div class="col-12 col-sm-6 col-md-4 col-lg-3" v-for="(app,i) in apps" :key="i">
+        <div class="card app-card h-100">
+          <div class="app-poster-container">
+            <img
+              v-if="app['image-path']"
+              :src="'/api/covers/' + i"
+              class="app-poster"
+              :alt="app.name"
+              @error="handleImageError"
+            />
+            <div v-else class="app-poster-placeholder">
+              <span class="app-initial">{{ app.name.charAt(0).toUpperCase() }}</span>
+            </div>
+          </div>
+          <div class="card-body d-flex flex-column">
+            <h5 class="card-title mb-2">{{ app.name }}</h5>
+            <div class="app-details text-muted small mb-3">
+              <div v-if="app.output" class="text-truncate">
+                <file-text :size="14" class="icon me-1"></file-text>
+                {{ app.output }}
+              </div>
+              <div v-if="app.cmd" class="text-truncate">
+                <terminal :size="14" class="icon me-1"></terminal>
+                {{ app.cmd }}
+              </div>
+            </div>
+            <div class="mt-auto d-flex gap-2">
+              <button class="btn btn-sm btn-primary flex-fill" @click="editApp(i)">
+                <edit :size="16" class="icon"></edit>
+                {{ $t('apps.edit') }}
               </button>
-              <button class="btn btn-danger mx-1" @click="showDeleteForm(i)">
-                <i class="fas fa-trash"></i> {{ $t('apps.delete') }}
+              <button class="btn btn-sm btn-danger" @click="showDeleteForm(i)">
+                <trash-2 :size="16" class="icon"></trash-2>
               </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="edit-form card mt-2" v-if="showEditForm">
-      <div class="p-4">
+
+    <!-- Empty State -->
+    <div v-else class="card">
+      <div class="card-body text-center py-5">
+        <p class="text-muted">{{ $t('apps.no_applications') }}</p>
+      </div>
+    </div>
+
+    <div class="edit-form card mt-4" v-if="showEditForm">
+      <div class="card-body">
         <!-- Application Name -->
         <div class="mb-3">
           <label for="appName" class="form-label">{{ $t('apps.app_name') }}</label>
@@ -111,8 +73,14 @@
         <!-- output -->
         <div class="mb-3">
           <label for="appOutput" class="form-label">{{ $t('apps.output_name') }}</label>
-          <input type="text" class="form-control monospace" id="appOutput" aria-describedby="appOutputHelp"
-            v-model="editForm.output" />
+          <div class="input-group">
+            <input type="text" class="form-control monospace" id="appOutput" aria-describedby="appOutputHelp"
+              v-model="editForm.output" />
+            <button class="btn btn-secondary" type="button"
+              @click="browseFor('any', 'file_browser.select_file', editForm.output, v => editForm.output = v)">
+              <folder-open :size="18" class="icon"></folder-open>
+            </button>
+          </div>
           <div id="appOutputHelp" class="form-text">{{ $t('apps.output_desc') }}</div>
         </div>
         <!-- prep-cmd -->
@@ -129,16 +97,24 @@
           <div class="form-text">{{ $t('apps.cmd_prep_desc') }}</div>
           <div class="d-flex justify-content-start mb-3 mt-3" v-if="editForm['prep-cmd'].length === 0">
             <button class="btn btn-success" @click="addPrepCmd">
-              <i class="fas fa-plus mr-1"></i> {{ $t('apps.add_cmds') }}
+              <plus :size="18" class="icon"></plus>
+              {{ $t('apps.add_cmds') }}
             </button>
           </div>
           <table class="table" v-if="editForm['prep-cmd'].length > 0">
             <thead>
               <tr>
-                <th scope="col"><i class="fas fa-play"></i> {{ $t('_common.do_cmd') }}</th>
-                <th scope="col"><i class="fas fa-undo"></i> {{ $t('_common.undo_cmd') }}</th>
+                <th scope="col">
+                  <play :size="18" class="icon"></play>
+                  {{ $t('_common.do_cmd') }}
+                </th>
+                <th scope="col">
+                  <rotate-ccw :size="18" class="icon"></rotate-ccw>
+                  {{ $t('_common.undo_cmd') }}
+                </th>
                 <th scope="col" v-if="platform === 'windows'">
-                  <i class="fas fa-shield-alt"></i> {{ $t('_common.run_as') }}
+                  <shield :size="18" class="icon"></shield>
+                  {{ $t('_common.run_as') }}
                 </th>
                 <th scope="col"></th>
               </tr>
@@ -146,10 +122,20 @@
             <tbody>
               <tr v-for="(c, i) in editForm['prep-cmd']">
                 <td>
-                  <input type="text" class="form-control monospace" v-model="c.do" />
+                  <div class="input-group">
+                    <input type="text" class="form-control monospace" v-model="c.do" />
+                    <button class="btn btn-secondary btn-sm" type="button" @click="browsePrep(i, 'do')">
+                      <folder-open :size="14" class="icon"></folder-open>
+                    </button>
+                  </div>
                 </td>
                 <td>
-                  <input type="text" class="form-control monospace" v-model="c.undo" />
+                  <div class="input-group">
+                    <input type="text" class="form-control monospace" v-model="c.undo" />
+                    <button class="btn btn-secondary btn-sm" type="button" @click="browsePrep(i, 'undo')">
+                      <folder-open :size="14" class="icon"></folder-open>
+                    </button>
+                  </div>
                 </td>
                 <td v-if="platform === 'windows'" class="align-middle">
                   <Checkbox :id="'prep-cmd-admin-' + i"
@@ -158,12 +144,12 @@
                             v-model="c.elevated"
                   ></Checkbox>
                 </td>
-                <td>
-                  <button class="btn btn-danger" @click="editForm['prep-cmd'].splice(i,1)">
-                    <i class="fas fa-trash"></i>
+                <td class="align-middle">
+                  <button class="btn btn-danger btn-sm ms-2" @click="deletePrepCmd(i)">
+                    <trash-2 :size="16" class="icon"></trash-2>
                   </button>
-                  <button class="btn btn-success" @click="addPrepCmd">
-                    <i class="fas fa-plus"></i>
+                  <button class="btn btn-success btn-sm ms-2" @click="addPrepCmd">
+                    <plus :size="16" class="icon"></plus>
                   </button>
                 </td>
               </tr>
@@ -173,15 +159,22 @@
         <!-- detached -->
         <div class="mb-3">
           <label for="appName" class="form-label">{{ $t('apps.detached_cmds') }}</label>
-          <div v-for="(c,i) in editForm.detached" class="d-flex justify-content-between my-2">
+          <div v-for="(c,i) in editForm.detached" class="d-flex justify-content-between align-items-center my-2">
             <input type="text" v-model="editForm.detached[i]" class="form-control monospace">
-            <button class="btn btn-danger mx-2" @click="editForm.detached.splice(i,1)">
-              &times;
+            <button class="btn btn-secondary btn-sm ms-2" @click="browseDetached(i)">
+              <folder-open :size="14" class="icon"></folder-open>
+            </button>
+            <button class="btn btn-danger btn-sm ms-2" @click="editForm.detached.splice(i,1)">
+              <trash-2 :size="16" class="icon"></trash-2>
+            </button>
+            <button class="btn btn-success btn-sm ms-2" @click="addDetached">
+              <plus :size="16" class="icon"></plus>
             </button>
           </div>
-          <div class="d-flex justify-content-between">
-            <button class="btn btn-success" @click="editForm.detached.push('');">
-              <i class="fas fa-plus mr-1"></i> {{ $t('apps.detached_cmds_add') }}
+          <div class="d-flex justify-content-start mb-3 mt-3" v-if="editForm.detached.length === 0">
+            <button class="btn btn-success" @click="addDetached">
+              <plus :size="18" class="icon"></plus>
+              {{ $t('apps.detached_cmds_add') }}
             </button>
           </div>
           <div class="form-text">
@@ -192,8 +185,14 @@
         <!-- command -->
         <div class="mb-3">
           <label for="appCmd" class="form-label">{{ $t('apps.cmd') }}</label>
-          <input type="text" class="form-control monospace" id="appCmd" aria-describedby="appCmdHelp"
-            v-model="editForm.cmd" />
+          <div class="input-group">
+            <input type="text" class="form-control monospace" id="appCmd" aria-describedby="appCmdHelp"
+              v-model="editForm.cmd" />
+            <button class="btn btn-secondary" type="button"
+              @click="browseFor('executable', 'file_browser.select_executable', editForm.cmd, v => editForm.cmd = v)">
+              <folder-open :size="18" class="icon"></folder-open>
+            </button>
+          </div>
           <div id="appCmdHelp" class="form-text">
             {{ $t('apps.cmd_desc') }}<br>
             <b>{{ $t('_common.note') }}</b> {{ $t('apps.cmd_note') }}
@@ -202,8 +201,14 @@
         <!-- working dir -->
         <div class="mb-3">
           <label for="appWorkingDir" class="form-label">{{ $t('apps.working_dir') }}</label>
-          <input type="text" class="form-control monospace" id="appWorkingDir" aria-describedby="appWorkingDirHelp"
-            v-model="editForm['working-dir']" />
+          <div class="input-group">
+            <input type="text" class="form-control monospace" id="appWorkingDir" aria-describedby="appWorkingDirHelp"
+              v-model="editForm['working-dir']" />
+            <button class="btn btn-secondary" type="button"
+              @click="browseFor('directory', 'file_browser.select_directory', editForm['working-dir'], v => editForm['working-dir'] = v)">
+              <folder-open :size="18" class="icon"></folder-open>
+            </button>
+          </div>
           <div id="appWorkingDirHelp" class="form-text">{{ $t('apps.working_dir_desc') }}</div>
         </div>
         <!-- elevation -->
@@ -240,42 +245,83 @@
         </div>
         <div class="mb-3">
           <label for="appImagePath" class="form-label">{{ $t('apps.image') }}</label>
-          <div class="input-group dropup">
+          <div class="input-group">
             <input type="text" class="form-control monospace" id="appImagePath" aria-describedby="appImagePathHelp"
               v-model="editForm['image-path']" />
-            <button class="btn btn-secondary dropdown-toggle" type="button" id="findCoverToggle"
-              aria-expanded="false" @click="showCoverFinder" ref="coverFinderDropdown">
+            <button class="btn btn-secondary" type="button"
+              @click="browseFor('file', 'file_browser.select_file', editForm['image-path'], v => editForm['image-path'] = v)">
+              <folder-open :size="18" class="icon"></folder-open>
+            </button>
+            <button class="btn btn-secondary" type="button" data-bs-toggle="modal" data-bs-target="#coverFinderModal"
+              @click="showCoverFinder">
+              <search :size="18" class="icon"></search>
               {{ $t('apps.find_cover') }}
             </button>
-            <div class="dropdown-menu dropdown-menu-end w-50 cover-finder overflow-hidden"
-              aria-labelledby="findCoverToggle">
-              <div class="modal-header px-2">
-                <h4 class="modal-title">{{ $t('apps.covers_found') }}</h4>
-                <button type="button" class="btn-close mr-2" aria-label="Close" @click="closeCoverFinder"></button>
+          </div>
+          <div id="appImagePathHelp" class="form-text">{{ $t('apps.image_desc') }}</div>
+        </div>
+
+        <!-- Cover Finder Modal -->
+        <div class="modal fade" id="coverFinderModal" tabindex="-1" aria-labelledby="coverFinderModalLabel" aria-hidden="true" ref="coverFinderModal">
+          <div class="modal-dialog modal-xl modal-dialog-scrollable modal-fullscreen-md-down">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="coverFinderModalLabel">
+                  <span v-if="coverSearching">{{ $t('apps.searching_covers') }}</span>
+                  <span v-else-if="coverCandidates.length > 0">{{ $t('apps.covers_found') }} ({{ coverCandidates.length }})</span>
+                  <span v-else>{{ $t('apps.no_covers_found') }}</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
               </div>
-              <div class="modal-body cover-results px-3 pt-3" :class="{ busy: coverFinderBusy }">
-                <div class="row">
-                  <div v-if="coverSearching" class="col-12 col-sm-6 col-lg-4 mb-3">
-                    <div class="cover-container">
-                      <div class="spinner-border" role="status">
-                        <span class="visually-hidden">{{ $t('apps.loading') }}</span>
+              <div class="modal-body">
+                <div class="mb-3">
+                  <div class="input-group">
+                    <input
+                      type="text"
+                      class="form-control"
+                      v-model="coverSearchQuery"
+                      :placeholder="editForm.name"
+                      @keyup.enter="performCoverSearch"
+                    />
+                    <button class="btn btn-primary" type="button" @click="performCoverSearch">
+                      <search :size="18" class="icon"></search>
+                      {{ $t('_common.search') }}
+                    </button>
+                  </div>
+                  <div class="form-text mt-2">
+                    <b>{{ $t('_common.note') }}</b> {{ $t('apps.cover_search_hint') }}
+                    <a href="https://www.igdb.com/" target="_blank" rel="noopener noreferrer">IGDB</a>
+                  </div>
+                </div>
+                <div class="cover-results" :class="{ busy: coverFinderBusy }">
+                  <div class="row">
+                    <div v-if="coverSearching" class="col-12 col-sm-6 col-lg-4 mb-3">
+                      <div class="cover-container">
+                        <div class="spinner-border" role="status">
+                          <span class="visually-hidden">{{ $t('apps.loading') }}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div v-for="(cover,i) in coverCandidates" :key="'i'" class="col-12 col-sm-6 col-lg-4 mb-3"
-                    @click="useCover(cover)">
-                    <div class="cover-container result">
-                      <img class="rounded" :src="cover.url" />
+                    <div v-for="(cover,i) in coverCandidates" :key="'i'" class="col-12 col-sm-6 col-lg-3 mb-3"
+                      @click="useCover(cover)">
+                      <div class="cover-container result">
+                        <img class="rounded" :src="cover.url" />
+                      </div>
+                      <label class="d-block text-nowrap text-center text-truncate">
+                        {{cover.name}}
+                      </label>
                     </div>
-                    <label class="d-block text-nowrap text-center text-truncate">
-                      {{cover.name}}
-                    </label>
                   </div>
                 </div>
               </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                  <x :size="18" class="icon"></x>
+                  {{ $t('_common.cancel') }}
+                </button>
+              </div>
             </div>
           </div>
-          <div id="appImagePathHelp" class="form-text">{{ $t('apps.image_desc') }}</div>
         </div>
         <div class="env-hint alert alert-info">
           <div class="form-text">
@@ -344,16 +390,89 @@
         <!-- Save buttons -->
         <div class="d-flex">
           <button @click="showEditForm = false" class="btn btn-secondary m-2">
+            <x :size="18" class="icon"></x>
             {{ $t('_common.cancel') }}
           </button>
-          <button class="btn btn-primary m-2" @click="save">{{ $t('_common.save') }}</button>
+          <button class="btn btn-primary m-2" @click="save">
+            <save :size="18" class="icon"></save>
+            {{ $t('_common.save') }}
+          </button>
         </div>
       </div>
     </div>
-    <div class="mt-2" v-else>
+    <div class="mt-4" v-else>
       <button class="btn btn-primary" @click="newApp">
-        <i class="fas fa-plus"></i> {{ $t('apps.add_new') }}
+        <layers-plus :size="18" class="icon"></layers-plus>
+        {{ $t('apps.add_new') }}
       </button>
+    </div>
+
+    <!-- Shared file browser modal -->
+    <div class="modal fade" ref="fileBrowserModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable modal-fullscreen-md-down">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">{{ fileBrowserTitle || $t('file_browser.title') }}</h5>
+            <button type="button" class="btn-close" @click="fileBrowserClose" :aria-label="$t('_common.close')"></button>
+          </div>
+          <div class="modal-body">
+            <!-- Path input -->
+            <div class="input-group mb-2">
+              <input type="text" class="form-control monospace" v-model="fileBrowserTypedPath"
+                @input="fileBrowserOnTypedInput" @keyup.enter="fileBrowserNavigate(fileBrowserTypedPath)" />
+              <button class="btn btn-secondary" type="button" @click="fileBrowserNavigate(fileBrowserTypedPath)">
+                <arrow-right :size="16" class="icon"></arrow-right>
+              </button>
+            </div>
+            <!-- Up button -->
+            <div class="mb-2">
+              <button class="btn btn-sm btn-outline-secondary" type="button"
+                :disabled="fileBrowserLoading || fileBrowserParentPath === fileBrowserCurrentPath"
+                @click="fileBrowserNavigateUp">
+                <folder-up :size="16" class="icon me-1"></folder-up>
+                {{ $t('file_browser.up') }}
+              </button>
+            </div>
+            <!-- Error -->
+            <div v-if="fileBrowserError" class="alert alert-danger py-2 small">{{ fileBrowserError }}</div>
+            <!-- Loading -->
+            <div v-if="fileBrowserLoading" class="text-center py-3">
+              <output class="spinner-border spinner-border-sm">
+                <span class="visually-hidden">{{ $t('_common.loading') }}</span>
+              </output>
+            </div>
+            <!-- Entries -->
+            <div v-else class="list-group" style="max-height: 400px; overflow-y: auto;">
+              <div v-if="fileBrowserEntries.length === 0" class="list-group-item text-muted text-center">
+                {{ $t('file_browser.empty') }}
+              </div>
+              <button v-for="entry in fileBrowserEntries" :key="entry.path" type="button"
+                class="list-group-item list-group-item-action d-flex align-items-center py-1"
+                :class="{ active: fileBrowserSelectedPath === entry.path }"
+                @click="fileBrowserSelectEntry(entry)" @dblclick="fileBrowserActivateEntry(entry)">
+                <hard-drive v-if="!fileBrowserCurrentPath && entry.type === 'directory'" :size="16" class="icon me-2 flex-shrink-0"></hard-drive>
+                <folder v-else-if="entry.type === 'directory'" :size="16" class="icon me-2 flex-shrink-0 text-warning"></folder>
+                <file-text v-else :size="16" class="icon me-2 flex-shrink-0"></file-text>
+                <span class="text-truncate">{{ entry.name }}</span>
+              </button>
+            </div>
+          </div>
+          <div class="modal-footer flex-wrap gap-2">
+            <div class="flex-grow-1 text-muted small text-truncate" v-if="fileBrowserSelectedPath">
+              <code>{{ fileBrowserSelectedPath }}</code>
+            </div>
+            <button type="button" class="btn btn-secondary" @click="fileBrowserClose">
+              <x :size="16" class="icon me-1"></x>
+              {{ $t('_common.cancel') }}
+            </button>
+            <button type="button" class="btn btn-primary" @click="fileBrowserConfirm"
+              :disabled="!fileBrowserSelectedPath && !fileBrowserTypedPath">
+              <check :size="16" class="icon me-1"></check>
+              {{ $t('file_browser.select') }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </body>
@@ -362,12 +481,51 @@
   import { initApp } from './init'
   import Navbar from './Navbar.vue'
   import Checkbox from './Checkbox.vue'
-  import { Dropdown } from 'bootstrap/dist/js/bootstrap'
+  import { apiFetch } from './fetch_utils'
+  import { Modal } from 'bootstrap/dist/js/bootstrap'
+  import {
+    ArrowRight,
+    Check,
+    Edit,
+    FileText,
+    Folder,
+    FolderOpen,
+    FolderUp,
+    HardDrive,
+    LayersPlus,
+    Play,
+    Plus,
+    RotateCcw,
+    Save,
+    Search,
+    Shield,
+    Terminal,
+    Trash2,
+    X,
+  } from 'lucide-vue-next'
 
   const app = createApp({
     components: {
       Navbar,
-      Checkbox
+      Checkbox,
+      ArrowRight,
+      Check,
+      Edit,
+      FileText,
+      Folder,
+      FolderOpen,
+      FolderUp,
+      HardDrive,
+      LayersPlus,
+      Play,
+      Plus,
+      RotateCcw,
+      Save,
+      Search,
+      Shield,
+      Terminal,
+      Trash2,
+      X,
     },
     data() {
       return {
@@ -378,7 +536,18 @@
         coverSearching: false,
         coverFinderBusy: false,
         coverCandidates: [],
+        coverSearchQuery: "",
         platform: "",
+        fileBrowserType: "any",
+        fileBrowserTitle: "",
+        fileBrowserCallback: null,
+        fileBrowserCurrentPath: "",
+        fileBrowserParentPath: "",
+        fileBrowserEntries: [],
+        fileBrowserLoading: false,
+        fileBrowserError: "",
+        fileBrowserSelectedPath: "",
+        fileBrowserTypedPath: "",
       };
     },
     created() {
@@ -398,7 +567,7 @@
         this.editForm = {
           name: "",
           output: "",
-          cmd: [],
+          cmd: "",
           index: -1,
           "exclude-global-prep-cmd": false,
           elevated: false,
@@ -440,7 +609,7 @@
           "Are you sure to delete " + this.apps[id].name + "?"
         );
         if (resp) {
-          fetch("./api/apps/" + id, {
+          apiFetch("./api/apps/" + id, {
             method: "DELETE",
             headers: {
               "Content-Type": "application/json"
@@ -462,22 +631,27 @@
 
         this.editForm["prep-cmd"].push(template);
       },
-      showCoverFinder($event) {
+      deletePrepCmd(index) {
+        this.editForm["prep-cmd"].splice(index, 1);
+      },
+      addDetached() {
+        this.editForm.detached.push("");
+      },
+      showCoverFinder() {
+        // Reset search state
         this.coverCandidates = [];
+        this.coverSearchQuery = "";
+
+        // Perform initial search with app name
+        this.performCoverSearch();
+      },
+      performCoverSearch() {
         this.coverSearching = true;
-        const ref = this.$refs.coverFinderDropdown;
-        if (!ref) {
-          console.error("Ref not found!");
-          return;
-        }
-        this.coverFinderDropdown = Dropdown.getInstance(ref);
-        if (!this.coverFinderDropdown) {
-          this.coverFinderDropdown = new Dropdown(ref);
-          if (!this.coverFinderDropdown) {
-            return;
-          }
-        }
-        this.coverFinderDropdown.show();
+        this.coverCandidates = [];
+
+        // Use search query if provided, otherwise fall back to app name
+        const searchTerm = this.coverSearchQuery.trim() || this.editForm["name"].toString();
+
         function getSearchBucket(name) {
           let bucket = name.substring(0, Math.min(name.length, 2)).toLowerCase().replaceAll(/[^a-z\d]/g, '');
           if (!bucket) {
@@ -526,24 +700,13 @@
               }).filter(item => item));
         }
 
-        searchCovers(this.editForm["name"].toString())
+        searchCovers(searchTerm)
           .then(list => this.coverCandidates = list)
           .finally(() => this.coverSearching = false);
       },
-      closeCoverFinder() {
-        const ref = this.$refs.coverFinderDropdown;
-        if (!ref) {
-          return;
-        }
-        const dropdown = this.coverFinderDropdown = Dropdown.getInstance(ref);
-        if (!dropdown) {
-          return;
-        }
-        dropdown.hide();
-      },
       useCover(cover) {
         this.coverFinderBusy = true;
-        fetch("./api/covers/upload", {
+        apiFetch("./api/covers/upload", {
           method: "POST",
           headers: {
             'Content-Type': 'application/json'
@@ -555,13 +718,98 @@
         }).then(r => {
           if (!r.ok) throw new Error("Failed to download covers");
           return r.json();
-        }).then(body => this.editForm["image-path"] = body.path)
-          .then(() => this.closeCoverFinder())
+        }).then(body => {
+          this.editForm["image-path"] = body.path;
+          // Close the modal
+          const modalEl = this.$refs.coverFinderModal;
+          if (modalEl) {
+            const modal = Modal.getInstance(modalEl);
+            if (modal) {
+              modal.hide();
+            }
+          }
+        })
           .finally(() => this.coverFinderBusy = false);
+      },
+      browseFor(type, titleKey, startPath, callback) {
+        this.fileBrowserType = type;
+        this.fileBrowserTitle = this.$t(titleKey);
+        this.fileBrowserCallback = callback;
+        this.fileBrowserSelectedPath = startPath || '';
+        this.fileBrowserTypedPath = startPath || '';
+        this.fileBrowserError = '';
+        this.fileBrowserNavigate(startPath || '');
+        Modal.getOrCreateInstance(this.$refs.fileBrowserModal).show();
+      },
+      fileBrowserClose() {
+        const modal = Modal.getInstance(this.$refs.fileBrowserModal);
+        if (modal) modal.hide();
+      },
+      fileBrowserConfirm() {
+        const path = this.fileBrowserSelectedPath || this.fileBrowserTypedPath;
+        if (path) {
+          if (this.fileBrowserCallback) {
+            this.fileBrowserCallback(path);
+            this.fileBrowserCallback = null;
+          }
+          this.fileBrowserClose();
+        }
+      },
+      fileBrowserNavigate(path) {
+        this.fileBrowserLoading = true;
+        this.fileBrowserError = '';
+        const params = new URLSearchParams({ type: this.fileBrowserType });
+        if (path) params.set('path', path);
+        fetch(`./api/browse?${params.toString()}`)
+          .then(r => r.ok ? r.json() : r.json().then(e => { throw new Error(e.error || 'Browse failed'); }))
+          .then(data => {
+            this.fileBrowserCurrentPath = data.path ?? '';
+            this.fileBrowserParentPath = data.parent ?? '';
+            this.fileBrowserEntries = data.entries ?? [];
+            this.fileBrowserTypedPath = data.path ?? '';
+            this.fileBrowserSelectedPath = this.fileBrowserType === 'directory' ? (data.path ?? '') : '';
+          })
+          .catch(err => { this.fileBrowserError = err.message; })
+          .finally(() => { this.fileBrowserLoading = false; });
+      },
+      fileBrowserNavigateUp() {
+        this.fileBrowserNavigate(this.fileBrowserParentPath);
+      },
+      fileBrowserSelectEntry(entry) {
+        if (entry.type === 'directory') {
+          this.fileBrowserNavigate(entry.path);
+        } else {
+          this.fileBrowserSelectedPath = entry.path;
+          this.fileBrowserTypedPath = entry.path;
+        }
+      },
+      fileBrowserActivateEntry(entry) {
+        if (entry.type === 'directory') {
+          this.fileBrowserNavigate(entry.path);
+        } else {
+          this.fileBrowserSelectedPath = entry.path;
+          this.fileBrowserTypedPath = entry.path;
+          this.fileBrowserConfirm();
+        }
+      },
+      fileBrowserOnTypedInput() {
+        this.fileBrowserSelectedPath = this.fileBrowserTypedPath;
+      },
+      browsePrep(index, field) {
+        const current = this.editForm['prep-cmd'][index][field] || '';
+        this.browseFor('executable', 'file_browser.select_executable', current, (path) => {
+          this.editForm['prep-cmd'][index][field] = path;
+        });
+      },
+      browseDetached(index) {
+        const current = this.editForm.detached[index] || '';
+        this.browseFor('executable', 'file_browser.select_executable', current, (path) => {
+          this.editForm.detached[index] = path;
+        });
       },
       save() {
         this.editForm["image-path"] = this.editForm["image-path"].toString().replace(/"/g, '');
-        fetch("./api/apps", {
+        apiFetch("./api/apps", {
           method: "POST",
           headers: {
             'Content-Type': 'application/json'
@@ -571,14 +819,17 @@
           if (r.status === 200) document.location.reload();
         });
       },
+      handleImageError(event) {
+        // Hide the broken image and show placeholder instead
+        event.target.style.display = 'none';
+        const placeholder = event.target.nextElementSibling;
+        if (placeholder && placeholder.classList.contains('app-poster-placeholder')) {
+          placeholder.style.display = 'flex';
+        }
+      }
     },
   });
 
-  app.directive('dropdown-show', {
-    mounted: function (el, binding) {
-      el.addEventListener('show.bs.dropdown', binding.value);
-    }
-  });
 
   initApp(app);
 </script>

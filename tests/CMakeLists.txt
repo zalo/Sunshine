@@ -79,6 +79,11 @@ list(APPEND TEST_DEFINITIONS SUNSHINE_TESTS)
 list(APPEND TEST_DEFINITIONS SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 list(APPEND TEST_DEFINITIONS SUNSHINE_TEST_BIN_DIR="${CMAKE_CURRENT_BINARY_DIR}")
 
+# Override SUNSHINE_ASSETS_DIR to use a writable temp directory for tests
+# Remove the existing definition from SUNSHINE_DEFINITIONS to avoid redefinition error
+list(FILTER SUNSHINE_DEFINITIONS EXCLUDE REGEX "^SUNSHINE_ASSETS_DIR=")
+list(APPEND TEST_DEFINITIONS SUNSHINE_ASSETS_DIR="${CMAKE_CURRENT_BINARY_DIR}/test_assets")
+
 if(NOT WIN32)
     find_package(Udev 255)  # we need 255+ for udevadm verify
     message(STATUS "UDEV_FOUND: ${UDEV_FOUND}")
@@ -90,6 +95,12 @@ endif()
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_SOURCE_DIR}/tests/*.h
         ${CMAKE_SOURCE_DIR}/tests/*.cpp)
+# Add macOS-specific test files only when building tests for macOS
+if (APPLE)
+    file(GLOB_RECURSE MACOS_TEST_SOURCES CONFIGURE_DEPENDS
+            ${CMAKE_SOURCE_DIR}/tests/*.mm)
+    list(APPEND TEST_SOURCES ${MACOS_TEST_SOURCES})
+endif ()
 
 set(SUNSHINE_SOURCES
         ${SUNSHINE_TARGET_FILES})
@@ -163,4 +174,15 @@ if (WIN32)
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
+
+    # Copy minhook-detours DLL to test binary directory for ARM64
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64" AND DEFINED _MINHOOK_DLL)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_MINHOOK_DLL}"
+                "${CMAKE_CURRENT_BINARY_DIR}"
+            COMMENT "Copying minhook-detours DLL to test binary directory"
+            VERBATIM
+        )
+    endif()
 endif ()

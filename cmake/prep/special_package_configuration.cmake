@@ -10,11 +10,10 @@ if(APPLE)
     endif()
 elseif(UNIX)
     # configure the .desktop file
-    set(SUNSHINE_DESKTOP_ICON "sunshine")
+    set(SUNSHINE_DESKTOP_ICON "${PROJECT_FQDN}")
     if(${SUNSHINE_BUILD_APPIMAGE})
         configure_file(packaging/linux/AppImage/${PROJECT_FQDN}.desktop ${PROJECT_FQDN}.desktop @ONLY)
     elseif(${SUNSHINE_BUILD_FLATPAK})
-        set(SUNSHINE_DESKTOP_ICON "${PROJECT_FQDN}")
         configure_file(packaging/linux/flatpak/${PROJECT_FQDN}.desktop ${PROJECT_FQDN}.desktop @ONLY)
     else()
         configure_file(packaging/linux/${PROJECT_FQDN}.desktop ${PROJECT_FQDN}.desktop @ONLY)
@@ -25,7 +24,7 @@ elseif(UNIX)
     configure_file(packaging/linux/${PROJECT_FQDN}.metainfo.xml ${PROJECT_FQDN}.metainfo.xml @ONLY)
 
     # configure service
-    configure_file(packaging/linux/sunshine.service.in sunshine.service @ONLY)
+    configure_file(packaging/linux/app-${PROJECT_FQDN}.service.in app-${PROJECT_FQDN}.service @ONLY)
 
     # configure the arch linux pkgbuild
     if(${SUNSHINE_CONFIGURE_PKGBUILD})
